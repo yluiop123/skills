@@ -1,7 +1,8 @@
 {
   "defaults": {
     "mode": "replace",
-    "suffix": ".toc"
+    "suffix": ".toc",
+    "layout": "alongside"
   },
   "items": [
     {

@@ -155,50 +155,100 @@ python scripts/pdf_toc.py add "scanned.pdf" --toc "scanned.toc.md" --offset 21
 python scripts/pdf_toc.py add "scanned.pdf" --toc "scanned.toc.json" --page-mode physical
 ```
 
-## 批量处理
+## 自动识别目录和页码
 
-### manifest
+CLI 提供两个辅助命令，Agent 可用它们识别目录，再让用户确认。
+
+### 文字版：导出页面文字
+
+```bash
+python scripts/pdf_toc.py text "book.pdf" --pages 1-40 --json
+```
+
+返回每页文字和 `tocCandidates`（可能的目录页）。Agent 根据文字整理标题和页码。
+
+### 扫描件：渲染页面图片
+
+```bash
+uv run --script scripts/render_pages.py \
+  "scanned.pdf" --pages 1-40 --out-dir "./.pdf-toc-pages" --scale 2.0 --json
+```
+
+`render_pages.py` 使用可选的 `pypdfium2 + Pillow`，由 `uv` 自动安装。Agent 用视觉读取 PNG，整理目录。主 CLI 仍然只依赖 pypdf。
+
+### 页码映射
+
+- 整体偏移（默认）：`--offset 21` 或 `--anchor 6=27`
+- 逐页映射：`--page-map pageMap.json`
 
 ```json
 {
-  "defaults": { "mode": "replace", "suffix": ".toc" },
+  "6": 27,
+  "95": 116,
+  "131": 152
+}
+```
+
+键是印刷页码，值是 PDF 物理页码。未出现在映射表中的条目按 `--offset` / `--page-mode` 处理。
+
+## 批量处理
+
+### 文件夹：镜像目录（默认）
+
+```bash
+python scripts/pdf_toc.py batch "books" --layout mirror --dry-run --json
+python scripts/pdf_toc.py batch "books" --layout mirror --json
+```
+
+默认输出到源文件夹同级的 `books.toc/`：
+
+```
+books/                      books.toc/
+  书A.pdf          →          书A.pdf
+  卷一/书B.pdf     →          卷一/书B.pdf
+```
+
+目录结构和文件名保持不变。`--out-dir` 可指定镜像根目录；位于源文件夹内部的输出目录会被自动排除。
+
+### 文件夹：同目录加后缀
+
+```bash
+python scripts/pdf_toc.py batch "books" --layout alongside --json
+```
+
+每个 PDF 旁边生成 `书A.toc.pdf`、`书B.toc.pdf`。
+
+### manifest（跨目录/逐项配置）
+
+```json
+{
+  "sourceRoot": "books",
+  "defaults": { "mode": "replace", "suffix": ".toc", "layout": "mirror" },
   "items": [
-    { "pdf": "书A.pdf", "toc": "书A.toc.json", "pageMode": "physical" },
-    { "pdf": "书B.pdf", "toc": "书B.toc.md", "offset": 21 }
+    { "pdf": "book-a.pdf", "toc": "book-a.toc.json", "pageMode": "physical" },
+    { "pdf": "sub/book-b.pdf", "toc": "sub/book-b.toc.md", "offset": 21 },
+    { "pdf": "book-c.pdf", "toc": "book-c.toc.json", "pageMap": { "6": 27, "95": 116 } }
   ]
 }
 ```
+
+`sourceRoot` 是镜像的源根目录；输出默认为同级的 `books.toc/`，保持结构。适合不同 PDF 需要不同偏移/映射的批量任务。文件夹默认递归处理子目录；只处理第一层用 `--no-recursive`。
 
 ```bash
 python scripts/pdf_toc.py batch manifest.json --dry-run --json
 python scripts/pdf_toc.py batch manifest.json --json
 ```
 
-### 目录配对
-
-```
-books/
-  书A.pdf
-  书A.toc.md
-  书B.pdf
-  书B.toc.json
-```
-
-```bash
-python scripts/pdf_toc.py batch "books" --dry-run --json
-python scripts/pdf_toc.py batch "books" --json
-```
-
-- 每项单独成功/失败，默认继续处理后续项目。
+- 每个 PDF 必须能找到同名 `.toc.json/.toc.md/.toc.txt`（或 `--toc-dir` 下同名文件）。
 - 找不到目录的 PDF 计为 `skipped`，默认让整体返回失败；可忽略时加 `--allow-skipped`。
-- 输出文件默认写到各自 PDF 同目录；用 `--out-dir` 统一输出。
-- 以 `.toc` 结尾的 PDF 会被自动排除，避免二次处理自己的产物。
+- 单项失败默认继续处理后续项目。
 
 ## 命令
 
 ```
 pdf-toc doctor [--json] [--fix] [--require-ready]
 pdf-toc inspect <pdf> [--json]
+pdf-toc text <pdf> [--pages 1-40] [--json]
 pdf-toc extract <pdf> --out <file> [--format json|md] [--force]
 pdf-toc add <pdf> --toc <file> [options]
 pdf-toc batch <dir|manifest.json> [options]
@@ -216,6 +266,8 @@ pdf-toc verify <pdf> [--expect-count N] [--json]
 | `--page-mode auto\|physical\|printed` | 目录页码含义，默认 `auto` |
 | `--offset <n>` | 物理页 = 印刷页 + n |
 | `--anchor <printed=physical>` | 锚点校准，可重复 |
+| `--page-map <file>` | 自定义印刷页 → 物理页映射 |
+| `--layout mirror\|alongside` | 批量输出布局（`batch`） |
 | `--on-exists rename\|error\|overwrite` | 输出冲突策略，默认 `rename` |
 | `--dry-run` | 只预览，不写文件 |
 | `--no-verify` | 跳过写入后的自动校验 |
@@ -256,7 +308,8 @@ python tests/e2e_local.py
 
 ## 限制
 
-- 不做 OCR：扫描件页面文字、扫描版目录页不会自动识别。目录需要用户提供，或由具备视觉能力的 Agent 读取目录页后整理。
+- 不内置 OCR：扫描件页面文字不会自动识别；目录页通过 `render_pages.py` 渲染成图片，由具备视觉能力的 Agent 读取整理。
+- 自动识别目录依赖 Agent 的文本/视觉能力；CLI 只负责导出文字、渲染页面、校验和写入。
 - 加密 PDF 不支持；请先解密。
 - 重新保存会改变 PDF 字节，可能使数字签名失效。
 - 合并模式会把原有书签重新写出；仅网址/脚本动作的书签可能失效，`inspect` / batch 会给出警告。

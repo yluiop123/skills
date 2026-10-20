@@ -25,7 +25,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 DEFAULT_SUFFIX = ".toc"
 PAGE_MODE_VALUES = ("auto", "physical", "printed")
 MODE_VALUES = ("replace", "merge", "keep")
@@ -462,19 +462,32 @@ def normalize_levels(entries: list[dict[str, Any]]) -> tuple[list[dict[str, Any]
 
 
 def resolve_entry_pages(
-    entries: list[dict[str, Any]], page_count: int, page_mode: str, offset: int = 0
+    entries: list[dict[str, Any]],
+    page_count: int,
+    page_mode: str,
+    offset: int = 0,
+    page_map: dict[int, int] | None = None,
 ) -> list[dict[str, Any]]:
     errors: list[dict[str, Any]] = []
     resolved: list[dict[str, Any]] = []
     for entry in entries:
-        page_index = entry["page"] + offset - 1 if page_mode == "printed" else entry["page"] - 1
+        mapped = page_map.get(int(entry["page"])) if page_map else None
+        if mapped is not None:
+            page_index = mapped - 1
+        elif page_mode == "printed":
+            page_index = entry["page"] + offset - 1
+        else:
+            page_index = entry["page"] - 1
         if page_index < 0 or page_index >= page_count:
+            reason = "小于第 1 页" if page_index < 0 else f"超过总页数 {page_count}"
+            if mapped is not None:
+                reason = f"页码映射到第 {mapped} 页，{reason}"
             errors.append(
                 {
                     "line": entry.get("source_line"),
                     "title": entry["title"],
                     "page": entry["page"],
-                    "reason": "小于第 1 页" if page_index < 0 else f"超过总页数 {page_count}",
+                    "reason": reason,
                 }
             )
         resolved.append({**entry, "page_index": page_index})
@@ -486,11 +499,12 @@ def resolve_entry_pages(
                 "pageCount": page_count,
                 "pageMode": page_mode,
                 "offset": offset,
+                "pageMap": page_map or {},
                 "entries": errors[:10],
                 "total": len(errors),
             },
             hint=(
-                "请检查页码是印刷页码、偏移量是否正确，或改用 --page-mode physical。"
+                "请检查页码是印刷页码、偏移量或 pageMap 是否正确，或改用 --page-mode physical。"
                 if page_mode == "printed"
                 else "请检查目录页码是否对应 PDF 的物理页（从 1 开始）。"
             ),
@@ -953,6 +967,103 @@ def verify_outline(reader, entries: list[dict[str, Any]], mode: str, existing_co
 # ---------------------------------------------------------------------------
 
 
+def _load_page_map(value: Any, base_dir: Path | None = None) -> dict[int, int] | None:
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        data = value
+    else:
+        path = Path(str(value))
+        if not path.is_absolute() and base_dir is not None:
+            path = base_dir / path
+        path = path.resolve()
+        if not path.is_file():
+            raise CliError("PAGE_MAP_NOT_FOUND", f"pageMap 文件不存在：{path}")
+        try:
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
+        except Exception as exc:
+            raise CliError("PAGE_MAP_INVALID", f"pageMap 解析失败：{path}", details=str(exc)) from exc
+        if isinstance(data, dict) and "pageMap" in data:
+            data = data["pageMap"]
+    if not isinstance(data, dict):
+        raise CliError(
+            "PAGE_MAP_INVALID",
+            "pageMap 必须是对象，例如 {\"6\": 27, \"95\": 116}。",
+            hint="键是印刷页码，值是 PDF 物理页码（都从 1 开始）。",
+        )
+    result: dict[int, int] = {}
+    for key, raw_value in data.items():
+        try:
+            printed = int(key)
+            physical = int(raw_value)
+        except (TypeError, ValueError) as exc:
+            raise CliError("PAGE_MAP_INVALID", f"pageMap 中的映射无效：{key} -> {raw_value}") from exc
+        if printed < 1 or physical < 1:
+            raise CliError("PAGE_MAP_INVALID", f"pageMap 页码必须大于 0：{key} -> {raw_value}")
+        result[printed] = physical
+    return result
+
+
+def parse_page_spec(spec: str | None, page_count: int) -> list[int]:
+    if not spec:
+        return list(range(min(page_count, 30)))
+    pages: set[int] = set()
+    for part in str(spec).split(","):
+        part = part.strip()
+        if not part:
+            continue
+        match = re.fullmatch(r"(\d+)\s*-\s*(\d+)", part)
+        if match:
+            start, end = int(match.group(1)), int(match.group(2))
+            if start > end:
+                start, end = end, start
+            pages.update(range(start, end + 1))
+        elif part.isdigit():
+            pages.add(int(part))
+        else:
+            raise CliError("PAGE_SPEC_INVALID", f"页码范围格式错误：{part}", exit_code=2)
+    selected = sorted(page for page in pages if 1 <= page <= page_count)
+    if not selected:
+        raise CliError("PAGE_SPEC_INVALID", f"页码范围不在 1..{page_count} 内：{spec}", exit_code=2)
+    return [page - 1 for page in selected]
+
+
+def extract_text_pages(path: str | Path, pages_spec: str | None = None) -> dict[str, Any]:
+    target = Path(path).resolve()
+    reader = open_pdf(target)
+    indices = parse_page_spec(pages_spec, len(reader.pages))
+    items = []
+    for index in indices:
+        try:
+            text = reader.pages[index].extract_text() or ""
+        except Exception as exc:
+            items.append({"page": index + 1, "chars": 0, "text": "", "error": str(exc)})
+            continue
+        head = text[:500]
+        score = 0
+        if "目录" in head or re.search(r"contents", head, re.IGNORECASE):
+            score += 5
+        if len(re.findall(r"(?:\.{3,}|…{2,}|·{3,})\s*\d{1,4}", text)) >= 3:
+            score += 3
+        if re.search(r"\n\s*\d{1,4}\s*\n", text):
+            score += 1
+        items.append(
+            {
+                "page": index + 1,
+                "chars": len(text),
+                "score": score,
+                "text": text,
+            }
+        )
+    return {
+        "file": str(target),
+        "pages": len(reader.pages),
+        "range": pages_spec or f"1-{min(len(reader.pages), 30)}",
+        "items": items,
+        "tocCandidates": [item["page"] for item in items if item.get("score", 0) >= 5],
+    }
+
+
 def _resolve_offset(offset: int | None, anchors: list[str] | None) -> int | None:
     if isinstance(anchors, str):
         anchors = [anchors]
@@ -1064,6 +1175,7 @@ def add_pdf(
     page_mode: str | None = None,
     offset: int | None = None,
     anchors: list[str] | None = None,
+    page_map: str | dict[str, Any] | None = None,
     on_exists: str = "rename",
     dry_run: bool = False,
     verify: bool = True,
@@ -1077,6 +1189,7 @@ def add_pdf(
     labels = get_page_labels(reader)
     label_offset = offset_from_labels(labels)
     explicit_offset = _resolve_offset(offset, anchors)
+    mapping = _load_page_map(page_map)
     offset_provided = explicit_offset is not None
 
     if toc_content is not None:
@@ -1136,7 +1249,7 @@ def add_pdf(
     entries, level_warnings = normalize_levels(parsed["entries"])
     warnings.extend(level_warnings)
     try:
-        entries = resolve_entry_pages(entries, page_count, effective_mode, effective_offset)
+        entries = resolve_entry_pages(entries, page_count, effective_mode, effective_offset, mapping)
     except CliError as error:
         fallback = detected.get("detected") if detected else None
         if (
@@ -1144,8 +1257,9 @@ def add_pdf(
             and effective_offset == 0
             and fallback not in (None, 0)
             and error.code == "TOC_PAGE_OUT_OF_RANGE"
+            and not mapping
         ):
-            entries = resolve_entry_pages(entries, page_count, effective_mode, int(fallback))
+            entries = resolve_entry_pages(entries, page_count, effective_mode, int(fallback), mapping)
             effective_offset = int(fallback)
             warnings.append(
                 {"code": "OFFSET_FALLBACK", "message": f"偏移 0 会导致页码越界，已自动改用检测到的偏移 {effective_offset}。"}
@@ -1189,6 +1303,8 @@ def add_pdf(
         "mode": mode,
         "pageMode": effective_mode,
         "offset": effective_offset if effective_mode == "printed" else 0,
+        "pageMap": mapping or {},
+        "pageMapEntries": len(mapping or {}),
         "existingOutline": existing["count"],
         "warnings": warnings,
         "offsetDetection": detected,
@@ -1470,6 +1586,11 @@ def build_parser() -> argparse.ArgumentParser:
     extract_parser.add_argument("--format", choices=("json", "markdown", "md"))
     extract_parser.add_argument("--force", action="store_true")
 
+    text_parser = subparsers.add_parser("text", help="导出指定页的文字，用于自动识别目录页")
+    _add_common(text_parser)
+    text_parser.add_argument("pdf")
+    text_parser.add_argument("--pages", help="页码范围，例如 1-30 或 1,5,9-12；默认前 30 页")
+
     add_parser = subparsers.add_parser("add", help="给一个 PDF 添加/替换目录")
     _add_common(add_parser)
     add_parser.add_argument("pdf")
@@ -1481,6 +1602,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_parser.add_argument("--page-mode", choices=PAGE_MODE_VALUES)
     add_parser.add_argument("--offset", type=int)
     add_parser.add_argument("--anchor", action="append", default=[], help="印刷页码=物理页码，可重复")
+    add_parser.add_argument("--page-map", help="自定义页码映射 JSON：{\"6\":27,\"95\":116}")
     add_parser.add_argument("--on-exists", choices=ON_EXISTS_VALUES, default="rename")
     add_parser.add_argument("--dry-run", action="store_true")
     add_parser.add_argument("--no-verify", action="store_true")
@@ -1492,7 +1614,8 @@ def build_parser() -> argparse.ArgumentParser:
     batch_parser.add_argument("--manifest")
     batch_parser.add_argument("--toc-dir")
     batch_parser.add_argument("--toc")
-    batch_parser.add_argument("--recursive", action="store_true")
+    batch_parser.add_argument("--recursive", action="store_true", help="兼容旧参数；文件夹默认递归")
+    batch_parser.add_argument("--no-recursive", action="store_true", help="只处理文件夹第一层")
     batch_parser.add_argument("--allow-skipped", action="store_true")
     batch_parser.add_argument("--stop-on-error", action="store_true")
     batch_parser.add_argument("--out")
@@ -1502,6 +1625,8 @@ def build_parser() -> argparse.ArgumentParser:
     batch_parser.add_argument("--page-mode", choices=PAGE_MODE_VALUES)
     batch_parser.add_argument("--offset", type=int)
     batch_parser.add_argument("--anchor", action="append", default=[])
+    batch_parser.add_argument("--page-map")
+    batch_parser.add_argument("--layout", choices=("mirror", "alongside"))
     batch_parser.add_argument("--on-exists", choices=ON_EXISTS_VALUES, default="rename")
     batch_parser.add_argument("--dry-run", action="store_true")
     batch_parser.add_argument("--no-verify", action="store_true")
@@ -1522,7 +1647,9 @@ def _print_add(result: dict[str, Any]) -> None:
     human(
         f"书签：{result['entries']} 个 / {result['levels']} 级  |  PDF：{result['pages']} 页  |  模式：{result['mode']}"
     )
-    if result["pageMode"] == "printed":
+    if result.get("pageMapEntries"):
+        human(f"页码：自定义映射（{result['pageMapEntries']} 条）")
+    elif result["pageMode"] == "printed":
         sign = "+" if result["offset"] >= 0 else ""
         human(f"页码：印刷页码 {sign}{result['offset']} → 物理页")
     else:
@@ -1568,6 +1695,7 @@ def _cmd_add(args) -> int:
         page_mode=args.page_mode,
         offset=args.offset,
         anchors=args.anchor,
+        page_map=args.page_map,
         on_exists=args.on_exists,
         dry_run=args.dry_run,
         verify=not args.no_verify,
@@ -1649,6 +1777,22 @@ def _cmd_extract(args) -> int:
     return 0
 
 
+def _cmd_text(args) -> int:
+    result = extract_text_pages(args.pdf, args.pages)
+    if args.json:
+        emit_json({"ok": True, "command": "text", **result})
+        return 0
+    human(f"PDF：{result['file']}  |  页数：{result['pages']}  |  范围：{result['range']}")
+    for item in result["items"]:
+        human("")
+        human(f"===== 第 {item['page']} 页（{item['chars']} 字符，目录评分 {item['score']}）=====")
+        human(item["text"].rstrip())
+    if result["tocCandidates"]:
+        human("")
+        human(f"可能的目录页：{', '.join(str(page) for page in result['tocCandidates'])}")
+    return 0
+
+
 def _cmd_verify(args) -> int:
     result = verify_pdf(args.pdf, args.expect_count)
     if args.json:
@@ -1714,6 +1858,17 @@ def _cmd_batch(args) -> int:
         raise CliError("FILE_NOT_FOUND", f"路径不存在：{target_path}")
     started = time.time()
     items: list[dict[str, Any]] = []
+    layout = args.layout
+    if layout is None:
+        layout = "mirror" if target_path.is_dir() else "alongside"
+    mirror_root = None
+    if layout == "mirror":
+        if args.out_dir:
+            mirror_root = Path(args.out_dir).resolve()
+        elif target_path.is_dir():
+            mirror_root = target_path.with_name(target_path.name + args.suffix)
+        else:
+            mirror_root = target_path.parent / f"{target_path.parent.name}{args.suffix}"
     common = {
         "out": args.out,
         "out_dir": args.out_dir,
@@ -1722,6 +1877,7 @@ def _cmd_batch(args) -> int:
         "page_mode": args.page_mode,
         "offset": args.offset,
         "anchors": args.anchor,
+        "page_map": args.page_map,
         "on_exists": args.on_exists,
         "dry_run": args.dry_run,
         "verify": not args.no_verify,
@@ -1743,11 +1899,24 @@ def _cmd_batch(args) -> int:
         if not isinstance(raw_items, list) or not raw_items:
             raise CliError("MANIFEST_EMPTY", "manifest 中没有 items。")
         base_dir = target_path.parent
+        source_root_setting = manifest.get("sourceRoot") if isinstance(manifest, dict) else None
+        source_root = (
+            (base_dir / source_root_setting).resolve() if source_root_setting else base_dir
+        )
+        manifest_mirror_root = source_root.with_name(source_root.name + args.suffix)
+        defaults_layout = defaults.get("layout", layout)
+        if defaults_layout == "mirror" and mirror_root is None:
+            mirror_root = manifest_mirror_root
         for raw in raw_items:
             item = {**defaults, **raw}
             if not item.get("pdf"):
                 items.append({"pdf": None, "toc": None, "config": common, "error": "manifest 项缺少 pdf 字段。"})
                 continue
+            item_layout = item.get("layout", defaults_layout)
+            page_map_value = item.get("pageMap", common["page_map"])
+            if isinstance(page_map_value, str):
+                page_map_value = str((base_dir / page_map_value).resolve())
+            pdf_path = (base_dir / item["pdf"]).resolve()
             config = {
                 **common,
                 "out": str((base_dir / item["out"]).resolve()) if item.get("out") else common["out"],
@@ -1757,25 +1926,48 @@ def _cmd_batch(args) -> int:
                 "page_mode": item.get("pageMode", common["page_mode"]),
                 "offset": item.get("offset", common["offset"]),
                 "anchors": item.get("anchors", item.get("anchor", common["anchors"])),
+                "page_map": page_map_value,
                 "on_exists": item.get("onExists", common["on_exists"]),
                 "dry_run": item.get("dryRun", common["dry_run"]),
                 "verify": item.get("verify", common["verify"]),
                 "open_panel": item.get("openPanel", common["open_panel"]),
             }
+            if item_layout == "mirror" and not item.get("out"):
+                try:
+                    relative = pdf_path.relative_to(source_root)
+                except ValueError:
+                    relative = Path(pdf_path.name)
+                root_setting = item.get("outputRoot")
+                if root_setting:
+                    root = Path(root_setting)
+                    if not root.is_absolute():
+                        root = base_dir / root
+                    root = root.resolve()
+                else:
+                    root = manifest_mirror_root
+                config["out"] = str(root / relative)
+                config["out_dir"] = None
             toc = item.get("toc")
             items.append(
                 {
-                    "pdf": str((base_dir / item["pdf"]).resolve()),
+                    "pdf": str(pdf_path),
                     "toc": str((base_dir / toc).resolve()) if toc else args.toc,
                     "config": config,
+                    "layout": item_layout,
                 }
             )
     elif target_path.is_dir():
+        if args.out:
+            raise CliError("USAGE", "文件夹批量不支持 --out；请使用 --out-dir 或 --layout。", exit_code=2)
         toc_dir = Path(args.toc_dir) if args.toc_dir else None
         exclude = [re.compile(pattern) for pattern in args.exclude]
         files = []
-        iterator = target_path.rglob("*.pdf") if args.recursive else target_path.glob("*.pdf")
+        iterator = target_path.glob("*.pdf") if args.no_recursive else target_path.rglob("*.pdf")
+        mirror_resolved = mirror_root.resolve() if mirror_root else None
         for file in sorted(iterator):
+            if mirror_resolved and mirror_resolved.is_relative_to(target_path):
+                if file.resolve().is_relative_to(mirror_resolved):
+                    continue
             stem = file.stem
             if stem.endswith(args.suffix) or re.search(r"\.toc(?:-\d+)?$", stem):
                 continue
@@ -1786,7 +1978,12 @@ def _cmd_batch(args) -> int:
             raise CliError("BATCH_NO_PDF", f"目录中没有找到 PDF：{target_path}")
         for file in files:
             toc = Path(args.toc).resolve() if args.toc else _find_toc_for_pdf(file, toc_dir)
-            items.append({"pdf": str(file.resolve()), "toc": str(toc) if toc else None, "config": dict(common)})
+            config = dict(common)
+            if layout == "mirror" and mirror_root is not None:
+                relative = file.relative_to(target_path)
+                config["out"] = str((mirror_root / relative).resolve())
+                config["out_dir"] = None
+            items.append({"pdf": str(file.resolve()), "toc": str(toc) if toc else None, "config": config, "layout": layout})
     else:
         raise CliError("USAGE", f"不支持的路径类型：{target_path}", exit_code=2)
 
@@ -1836,6 +2033,8 @@ def _cmd_batch(args) -> int:
                 break
 
     ok = failed == 0 and (skipped == 0 or args.allow_skipped)
+    item_layouts = {item.get("layout") for item in items if item.get("layout")}
+    summary_layout = item_layouts.pop() if len(item_layouts) == 1 else ("mixed" if item_layouts else layout)
     summary = {
         "ok": ok,
         "command": "batch",
@@ -1844,6 +2043,8 @@ def _cmd_batch(args) -> int:
         "failed": failed,
         "skipped": skipped,
         "dryRun": bool(args.dry_run),
+        "layout": summary_layout,
+        "outputRoot": str(mirror_root) if mirror_root else None,
         "items": results,
         "durationMs": int((time.time() - started) * 1000),
     }
@@ -1852,6 +2053,8 @@ def _cmd_batch(args) -> int:
     else:
         human("")
         human(f"完成：成功 {succeeded}，失败 {failed}，跳过 {skipped}")
+        if mirror_root:
+            human(f"输出目录：{mirror_root}")
         if not ok:
             human("有项目未成功处理，请查看上方错误或使用 --json 获取详情。")
     return 0 if ok else 1
@@ -1878,6 +2081,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_inspect(args)
         if args.command == "extract":
             return _cmd_extract(args)
+        if args.command == "text":
+            return _cmd_text(args)
         if args.command == "batch":
             return _cmd_batch(args)
         if args.command == "verify":

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pdf-toc-skill"
-version = "1.0.0"
+version = "1.1.0"
 description = "Add or replace PDF bookmarks (outline/TOC) safely, for text and scanned PDFs, single files or batches."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -13,13 +13,17 @@ authors = [{ name = "yluiop123" }]
 keywords = ["pdf", "bookmark", "outline", "toc", "table-of-contents", "scanned", "agent-skill"]
 dependencies = ["pypdf>=6.0"]
 
+[project.optional-dependencies]
+render = ["pypdfium2>=4.30.0", "pillow>=10.0"]
+
 [project.urls]
 Homepage = "https://github.com/yluiop123/skills"
 Repository = "https://github.com/yluiop123/skills"
 
 [project.scripts]
 pdf-toc = "pdf_toc:main"
+pdf-toc-render = "render_pages:main"
 
 [tool.setuptools]
 package-dir = { "" = "scripts" }
-py-modules = ["pdf_toc"]
+py-modules = ["pdf_toc", "render_pages"]

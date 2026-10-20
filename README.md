@@ -49,6 +49,8 @@ npx skills add https://github.com/yluiop123/skills --skill pdf-toc \
 npx skills add https://github.com/yluiop123/skills --list
 ```
 
+> `npx skills` 需要 Node.js 22.20 或更高版本。
+
 安装后 `pdf-toc` 会出现在所选 Agent 的 skills 目录中（例如 `.agents/skills/pdf-toc/`、`.claude/skills/pdf-toc/`、`.opencode/skills/pdf-toc/`）。
 
 ## 目录结构

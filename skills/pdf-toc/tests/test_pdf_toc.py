@@ -1,6 +1,7 @@
 import hashlib
 import io
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -98,6 +99,23 @@ class TocParserTests(unittest.TestCase):
         with self.assertRaises(pdf_toc.CliError):
             pdf_toc.resolve_entry_pages([{"title": "A", "page": 101, "level": 1}], 100, "physical", 0)
 
+    def test_page_map_overrides_offset(self):
+        entries = pdf_toc.resolve_entry_pages(
+            [{"title": "A", "page": 6, "level": 1}, {"title": "B", "page": 7, "level": 1}],
+            100,
+            "printed",
+            0,
+            {6: 27},
+        )
+        self.assertEqual(entries[0]["page_index"], 26)
+        self.assertEqual(entries[1]["page_index"], 6)
+
+    def test_parse_page_spec(self):
+        self.assertEqual(pdf_toc.parse_page_spec("1-3,5", 10), [0, 1, 2, 4])
+        self.assertEqual(pdf_toc.parse_page_spec("3-1", 10), [0, 1, 2])
+        with self.assertRaises(pdf_toc.CliError):
+            pdf_toc.parse_page_spec("99", 10)
+
 
 class PdfRoundTripTests(unittest.TestCase):
     def test_add_creates_new_verified_file(self):
@@ -171,6 +189,29 @@ class PdfRoundTripTests(unittest.TestCase):
             data = json.loads(result["content"])
             self.assertEqual(data["pageMode"], "physical")
             self.assertEqual(data["entries"][0]["title"], "已有书签")
+
+    def test_batch_mirror_layout_preserves_structure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "books"
+            (root / "sub").mkdir(parents=True)
+            make_pdf(root / "a.pdf")
+            make_pdf(root / "sub" / "b.pdf")
+            (root / "a.toc.md").write_text("第一章 1\n", encoding="utf-8")
+            (root / "sub" / "b.toc.md").write_text("第一章 1\n", encoding="utf-8")
+            script = Path(__file__).resolve().parents[1] / "scripts" / "pdf_toc.py"
+            completed = subprocess.run(
+                [sys.executable, str(script), "batch", str(root), "--layout", "mirror", "--json"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            data = json.loads(completed.stdout)
+            self.assertTrue(data["ok"], data)
+            output_root = Path(data["outputRoot"])
+            self.assertTrue((output_root / "a.pdf").is_file())
+            self.assertTrue((output_root / "sub" / "b.pdf").is_file())
+            self.assertFalse((root / "a.toc.pdf").exists())
 
 
 if __name__ == "__main__":
