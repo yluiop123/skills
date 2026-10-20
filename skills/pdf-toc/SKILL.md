@@ -1,6 +1,6 @@
 ---
 name: pdf-toc
-description: 给 PDF 添加或替换目录（书签 / Outline），兼容文字版和扫描件，支持单个文件和批量处理。默认生成带 .toc 后缀的新文件，绝不修改原文件。适用于“给 PDF 加目录/书签/导航”“根据目录生成 PDF 书签”“批量给扫描书加目录”“修复/合并 PDF 目录”等请求。
+description: 给 PDF 添加或替换目录（书签 / Outline），兼容文字版和扫描件，支持单个文件和整个文件夹。用户说“请给 xxx.pdf 增加目录”“请给 xxx 里的 pdf 文件增加目录”“给这本书加书签”“批量给扫描书加目录”时触发。Agent 自动检查环境、识别目录和页码、在工具中确认，默认生成带 .toc 后缀的新文件，绝不修改原文件。
 license: MIT
 compatibility: Requires Python 3.9+ and pypdf. Works in OpenCode, Claude Code, Cursor, Codex, Gemini CLI and other Agent Skills hosts.
 metadata:
@@ -27,6 +27,17 @@ npx skills add https://github.com/yluiop123/skills --skill pdf-toc
 4. 执行写入并校验。
 
 只有用户明确要求“把命令给我，我自己跑”时，才把命令交给用户。
+
+## 触发示例
+
+用户只需要说：
+
+- “请给 `D:\books\Java 8实战.pdf` 增加目录”
+- “请给 `D:\books\历史` 里的 PDF 文件增加目录”
+- “给这本书加个书签”
+- “根据这个目录文件生成 PDF 书签”
+
+不要要求用户先运行 `doctor`、`inspect` 或任何脚本；这些都由你执行。
 
 ## 铁律
 

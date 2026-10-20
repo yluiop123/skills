@@ -1,0 +1,320 @@
+# pdf-toc CLI 参考（开发者）
+
+这是命令行工具的开发者文档。**普通用户不需要看这个文件**——安装 Skill 后，直接对 Agent 说：
+
+> 请给 xxx.pdf 增加目录
+
+> 请给 xxx 文件夹里的 PDF 增加目录
+
+Agent 会自动检查环境、识别目录和页码、询问确认并写入。
+
+## 安装 CLI（可选）
+
+```bash
+pipx install "git+https://github.com/yluiop123/skills#subdirectory=skills/pdf-toc"
+# 或
+uv tool install "git+https://github.com/yluiop123/skills#subdirectory=skills/pdf-toc"
+
+pdf-toc doctor --json
+```
+
+## 特性
+
+- **只依赖 pypdf**：纯 Python、BSD-3-Clause，不依赖 PyMuPDF、Tesseract、qpdf。
+- **文字版 / 扫描件都支持**：书签是 PDF 结构，扫描件也能直接写入。
+- **不修改原文件**：默认输出同目录，文件名加 `.toc` 后缀。
+- **单文件 / 批量**：`add` 处理一个，`batch` 按 manifest 或目录配对处理一批。
+- **页码校准**：文字版可用 `/PageLabels` 或页眉/页脚文字自动检测偏移；扫描件用 `--offset` / `--anchor` 手动校准。
+- **写入前预览、写入后校验**：`--dry-run` + `verify`。
+- **不丢页码标签**：使用 `PdfWriter(clone_from=...)` 保留原 PDF 的 `/PageLabels` 和元数据。
+
+## 环境要求
+
+- Python **>= 3.9**
+- `pypdf >= 6.0`
+
+## 运行方式
+
+### 方式 1：uv（推荐，零安装）
+
+```bash
+uv run --script scripts/pdf_toc.py doctor --json
+```
+
+`uv` 会读取脚本顶部的 PEP 723 元数据，自动创建临时环境并安装 pypdf。
+
+### 方式 2：pipx / uv tool 安装成全局命令
+
+```bash
+pipx install "git+https://github.com/yluiop123/skills#subdirectory=skills/pdf-toc"
+# 或
+uv tool install "git+https://github.com/yluiop123/skills#subdirectory=skills/pdf-toc"
+
+pdf-toc doctor --json
+```
+
+### 方式 3：当前 Python
+
+```bash
+python -m pip install pypdf
+python scripts/pdf_toc.py doctor --json
+```
+
+## 快速开始
+
+### 1. 检查 PDF
+
+```bash
+python scripts/pdf_toc.py inspect "book.pdf" --json
+```
+
+关注：
+
+- `pages`：总页数
+- `text.scanned`：是否扫描件
+- `outline.count`：已有书签数
+- `pageLabels`：PDF 自带页码标签
+- `offset.detected` / `offset.confidence` / `offset.source`：检测到的印刷页码偏移
+
+### 2. 准备目录
+
+**JSON**
+
+```json
+{
+  "pageMode": "physical",
+  "entries": [
+    {
+      "title": "第一章 概述",
+      "page": 12,
+      "children": [
+        { "title": "1.1 背景", "page": 12 },
+        { "title": "1.2 目标", "page": 18 }
+      ]
+    },
+    { "title": "第二章 实现", "page": 35 }
+  ]
+}
+```
+
+`pageMode` 可以是 `physical`（PDF 物理页）或 `printed`（书上印刷页码）。省略时由命令行参数决定。
+
+**Markdown / 纯文本**
+
+```markdown
+第一章 概述 ................ 12
+  1.1 背景 .................. 12
+  1.2 目标 .................. 18
+第二章 实现 ................ 35
+```
+
+- 行尾最后一个数字是页码。
+- 缩进决定层级；没有缩进时按 `1.1`、`第一章/第一节` 推断。
+- 没有页码的卷/篇标题会使用下一项的页码；没有页码的附图行会跳过并给出警告。
+
+### 3. 预览
+
+```bash
+python scripts/pdf_toc.py add "book.pdf" --toc "book.toc.md" --dry-run --json
+```
+
+检查 `entries`、`pageMode`、`offset`、`preview`、`warnings`。确认后去掉 `--dry-run`：
+
+```bash
+python scripts/pdf_toc.py add "book.pdf" --toc "book.toc.md" --json
+```
+
+默认输出 `book.toc.pdf`。
+
+### 4. 校验
+
+```bash
+python scripts/pdf_toc.py verify "book.toc.pdf" --expect-count 42 --json
+```
+
+## 扫描件：页码偏移
+
+pypdf 不会 OCR。扫描件没有文字层，无法自动知道“书上第 6 页”是 PDF 第几页。
+
+**锚点（推荐）**：
+
+```bash
+# 书上第 6 页 = PDF 第 27 页
+python scripts/pdf_toc.py add "scanned.pdf" --toc "scanned.toc.md" --anchor 6=27
+```
+
+**整体偏移**：
+
+```bash
+# 物理页 = 印刷页 + 21
+python scripts/pdf_toc.py add "scanned.pdf" --toc "scanned.toc.md" --offset 21
+```
+
+**目录页码就是物理页**：
+
+```bash
+python scripts/pdf_toc.py add "scanned.pdf" --toc "scanned.toc.json" --page-mode physical
+```
+
+## 自动识别目录和页码
+
+CLI 提供两个辅助命令，Agent 可用它们识别目录，再让用户确认。
+
+### 文字版：导出页面文字
+
+```bash
+python scripts/pdf_toc.py text "book.pdf" --pages 1-40 --json
+```
+
+返回每页文字和 `tocCandidates`（可能的目录页）。Agent 根据文字整理标题和页码。
+
+### 扫描件：渲染页面图片
+
+```bash
+uv run --script scripts/render_pages.py \
+  "scanned.pdf" --pages 1-40 --out-dir "./.pdf-toc-pages" --scale 2.0 --json
+```
+
+`render_pages.py` 使用可选的 `pypdfium2 + Pillow`，由 `uv` 自动安装。Agent 用视觉读取 PNG，整理目录。主 CLI 仍然只依赖 pypdf。
+
+### 页码映射
+
+- 整体偏移（默认）：`--offset 21` 或 `--anchor 6=27`
+- 逐页映射：`--page-map pageMap.json`
+
+```json
+{
+  "6": 27,
+  "95": 116,
+  "131": 152
+}
+```
+
+键是印刷页码，值是 PDF 物理页码。未出现在映射表中的条目按 `--offset` / `--page-mode` 处理。
+
+## 批量处理
+
+### 文件夹：镜像目录（默认）
+
+```bash
+python scripts/pdf_toc.py batch "books" --layout mirror --dry-run --json
+python scripts/pdf_toc.py batch "books" --layout mirror --json
+```
+
+默认输出到源文件夹同级的 `books.toc/`：
+
+```
+books/                      books.toc/
+  书A.pdf          →          书A.pdf
+  卷一/书B.pdf     →          卷一/书B.pdf
+```
+
+目录结构和文件名保持不变。`--out-dir` 可指定镜像根目录；位于源文件夹内部的输出目录会被自动排除。
+
+### 文件夹：同目录加后缀
+
+```bash
+python scripts/pdf_toc.py batch "books" --layout alongside --json
+```
+
+每个 PDF 旁边生成 `书A.toc.pdf`、`书B.toc.pdf`。
+
+### manifest（跨目录/逐项配置）
+
+```json
+{
+  "sourceRoot": "books",
+  "defaults": { "mode": "replace", "suffix": ".toc", "layout": "mirror" },
+  "items": [
+    { "pdf": "book-a.pdf", "toc": "book-a.toc.json", "pageMode": "physical" },
+    { "pdf": "sub/book-b.pdf", "toc": "sub/book-b.toc.md", "offset": 21 },
+    { "pdf": "book-c.pdf", "toc": "book-c.toc.json", "pageMap": { "6": 27, "95": 116 } }
+  ]
+}
+```
+
+`sourceRoot` 是镜像的源根目录；输出默认为同级的 `books.toc/`，保持结构。适合不同 PDF 需要不同偏移/映射的批量任务。文件夹默认递归处理子目录；只处理第一层用 `--no-recursive`。
+
+```bash
+python scripts/pdf_toc.py batch manifest.json --dry-run --json
+python scripts/pdf_toc.py batch manifest.json --json
+```
+
+- 每个 PDF 必须能找到同名 `.toc.json/.toc.md/.toc.txt`（或 `--toc-dir` 下同名文件）。
+- 找不到目录的 PDF 计为 `skipped`，默认让整体返回失败；可忽略时加 `--allow-skipped`。
+- 单项失败默认继续处理后续项目。
+
+## 命令
+
+```
+pdf-toc doctor [--json] [--fix] [--require-ready]
+pdf-toc inspect <pdf> [--json]
+pdf-toc text <pdf> [--pages 1-40] [--json]
+pdf-toc extract <pdf> --out <file> [--format json|md] [--force]
+pdf-toc add <pdf> --toc <file> [options]
+pdf-toc batch <dir|manifest.json> [options]
+pdf-toc verify <pdf> [--expect-count N] [--json]
+```
+
+`add` 常用选项：
+
+| 选项 | 说明 |
+|---|---|
+| `--out <file>` | 指定输出文件 |
+| `--out-dir <dir>` | 指定输出目录 |
+| `--suffix <.toc>` | 输出后缀，默认 `.toc` |
+| `--mode replace\|merge\|keep` | 已有书签处理方式，默认 `replace` |
+| `--page-mode auto\|physical\|printed` | 目录页码含义，默认 `auto` |
+| `--offset <n>` | 物理页 = 印刷页 + n |
+| `--anchor <printed=physical>` | 锚点校准，可重复 |
+| `--page-map <file>` | 自定义印刷页 → 物理页映射 |
+| `--layout mirror\|alongside` | 批量输出布局（`batch`） |
+| `--on-exists rename\|error\|overwrite` | 输出冲突策略，默认 `rename` |
+| `--dry-run` | 只预览，不写文件 |
+| `--no-verify` | 跳过写入后的自动校验 |
+| `--no-open-panel` | 不设置打开 PDF 时显示书签栏 |
+
+## 安全设计
+
+- 原文件只读；输出路径等于原文件时直接报 `OUTPUT_IS_INPUT`。
+- 原子写入：先写临时文件，再 `os.replace`。
+- 输出已存在时默认改名 `-2`、`-3`。
+- 加密 PDF 拒绝处理。
+- 写入后重新打开输出，逐项比对标题、页码、层级，并检查页面目标。
+- 重新保存会使已有数字签名失效；如 PDF 有签名，先告知用户。
+
+## 退出码
+
+| 退出码 | 含义 |
+|---|---|
+| `0` | 成功 |
+| `1` | 处理失败 |
+| `2` | 参数错误 |
+| `3` | 环境未就绪（`doctor --require-ready`） |
+
+所有命令支持 `--json`。失败时为 `{ "ok": false, "error": { "code", "message", "hint" } }`。
+
+## 测试
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+本地端到端测试（需要把两个测试 PDF 的目录通过环境变量传入）：
+
+```bash
+set PDF_TOC_TEST_DIR=D:\my-project\pdf-menu
+python tests/e2e_local.py
+```
+
+## 限制
+
+- 不内置 OCR：扫描件页面文字不会自动识别；目录页通过 `render_pages.py` 渲染成图片，由具备视觉能力的 Agent 读取整理。
+- 自动识别目录依赖 Agent 的文本/视觉能力；CLI 只负责导出文字、渲染页面、校验和写入。
+- 加密 PDF 不支持；请先解密。
+- 重新保存会改变 PDF 字节，可能使数字签名失效。
+- 合并模式会把原有书签重新写出；仅网址/脚本动作的书签可能失效，`inspect` / batch 会给出警告。
+
+## License
+
+MIT。依赖 pypdf（BSD-3-Clause）。

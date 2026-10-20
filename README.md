@@ -4,25 +4,9 @@ Agent Skills 集合，兼容 OpenCode、Claude Code、Cursor、Codex、Gemini CL
 
 | Skill | 说明 |
 |---|---|
-| [`pdf-toc`](skills/pdf-toc/) | 给文字版或扫描版 PDF 添加/替换目录（书签），支持单个和批量，默认不修改原文件 |
+| [`pdf-toc`](skills/pdf-toc/) | 给文字版或扫描版 PDF 添加/替换目录（书签），支持单个文件和整个文件夹，默认不修改原文件 |
 
-## 目录结构
-
-```text
-skills/
-└── pdf-toc/
-    ├── SKILL.md
-    ├── README.md
-    ├── pyproject.toml
-    ├── scripts/
-    │   └── pdf_toc.py
-    ├── examples/
-    └── tests/
-```
-
-每个 skill 是一个独立目录，入口为 `SKILL.md`。
-
-## 安装 skill
+## 安装
 
 使用 [`skills`](https://github.com/vercel-labs/skills) CLI 安装到当前项目：
 
@@ -51,7 +35,17 @@ npx skills add https://github.com/yluiop123/skills --list
 
 > `npx skills` 需要 Node.js 22.20 或更高版本。
 
-安装后 `pdf-toc` 会出现在所选 Agent 的 skills 目录中（例如 `.agents/skills/pdf-toc/`、`.claude/skills/pdf-toc/`、`.opencode/skills/pdf-toc/`）。
+## 使用
+
+安装后，直接对 Agent 说：
+
+> 请给 `D:\books\Java 8实战.pdf` 增加目录
+
+> 请给 `D:\books\历史` 里的 PDF 文件增加目录
+
+Agent 会自动检查环境、识别目录和页码、在工具里向你确认，然后写入新文件。**你不需要手动运行任何脚本。**
+
+详细说明见 [`skills/pdf-toc/README.md`](skills/pdf-toc/README.md)。
 
 ## 目录结构
 
@@ -59,10 +53,12 @@ npx skills add https://github.com/yluiop123/skills --list
 skills/
 └── pdf-toc/
     ├── SKILL.md
-    ├── README.md
+    ├── README.md          # 用户说明
+    ├── CLI.md             # 开发者命令行参考
     ├── pyproject.toml
     ├── scripts/
-    │   └── pdf_toc.py
+    │   ├── pdf_toc.py
+    │   └── render_pages.py
     ├── examples/
     └── tests/
 ```
