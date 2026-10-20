@@ -1,0 +1,18 @@
+{
+  "defaults": {
+    "mode": "replace",
+    "suffix": ".toc"
+  },
+  "items": [
+    {
+      "pdf": "book-a.pdf",
+      "toc": "book-a.toc.json",
+      "pageMode": "physical"
+    },
+    {
+      "pdf": "book-b.pdf",
+      "toc": "book-b.toc.md",
+      "offset": 21
+    }
+  ]
+}

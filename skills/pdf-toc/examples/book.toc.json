@@ -1,0 +1,22 @@
+{
+  "pageMode": "physical",
+  "entries": [
+    {
+      "title": "第一章 概述",
+      "page": 1,
+      "children": [
+        { "title": "1.1 背景", "page": 1 },
+        { "title": "1.2 目标", "page": 3 }
+      ]
+    },
+    {
+      "title": "第二章 实现",
+      "page": 10,
+      "children": [
+        { "title": "2.1 架构", "page": 10 },
+        { "title": "2.2 测试", "page": 18 }
+      ]
+    },
+    { "title": "第三章 总结", "page": 30 }
+  ]
+}
