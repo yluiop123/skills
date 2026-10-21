@@ -119,21 +119,25 @@ uv run --script scripts/pdf_toc.py verify "book.toc.pdf" --expect-count 42 --jso
 
 ## 扫描件：页码偏移
 
-pypdf 不会 OCR。扫描件没有文字层，无法自动知道“书上第 6 页”是 PDF 第几页。
+pypdf 不会 OCR。扫描件没有文字层，无法自动知道“书上第 6 页”是 PDF 第几页。先用 `scan` 找到一页的印刷页码和物理页码。
 
 **锚点（推荐）**：
 
 ```bash
-# 书上第 6 页 = PDF 第 27 页
-uv run --script scripts/pdf_toc.py add "scanned.pdf" --toc "scanned.toc.md" --anchor 6=27
+uv run --script scripts/pdf_toc.py add "scanned.pdf" --toc "scanned.toc.md" \
+  --anchor "<PRINTED>=<PHYSICAL>"
 ```
+
+例如当前 PDF 里书上第 6 页是 PDF 第 27 页，才用 `--anchor 6=27`；**不要照抄这个值**。
 
 **整体偏移**：
 
 ```bash
-# 物理页 = 印刷页 + 21
-uv run --script scripts/pdf_toc.py add "scanned.pdf" --toc "scanned.toc.md" --offset 21
+uv run --script scripts/pdf_toc.py add "scanned.pdf" --toc "scanned.toc.md" \
+  --offset "<OFFSET>"
 ```
+
+`OFFSET = 物理页 - 印刷页`。示例中的 27-6=21 只对当前书有效。
 
 **目录页码就是物理页**：
 
@@ -159,8 +163,10 @@ uv run --script scripts/pdf_toc.py scan "book.pdf" --pages 1-40 --out-dir "./.pd
 
 ### 页码映射
 
-- 整体偏移（默认）：`--offset 21` 或 `--anchor 6=27`
+- 整体偏移（默认）：`--offset "<OFFSET>"` 或 `--anchor "<PRINTED>=<PHYSICAL>"`
 - 逐页映射：`--page-map pageMap.json`
+
+示例（不要照抄）：
 
 ```json
 {
@@ -170,18 +176,18 @@ uv run --script scripts/pdf_toc.py scan "book.pdf" --pages 1-40 --out-dir "./.pd
 }
 ```
 
-键是印刷页码，值是 PDF 物理页码。未出现在映射表中的条目按 `--offset` / `--page-mode` 处理。
+键是印刷页码，值是 PDF 物理页码。未出现在映射表中的条目按 `--offset` / `--page-mode` 处理。实际值必须来自当前 PDF 的 `scan` / 核对结果。
 
 ### 核对页码（可选）
 
 ```bash
 # 只核对最后一项所在页
 uv run --script scripts/pdf_toc.py check-pages "book.pdf" \
-  --toc "book.toc.json" --offset 21 --mode last --out-dir "./.pdf-toc-check" --json
+  --toc "book.toc.json" --offset "<OFFSET>" --mode last --out-dir "./.pdf-toc-check" --json
 
 # 核对所有目录项涉及的页；同一物理页只渲染一次
 uv run --script scripts/pdf_toc.py check-pages "book.pdf" \
-  --toc "book.toc.json" --offset 21 --mode all --out-dir "./.pdf-toc-check" --json
+  --toc "book.toc.json" --offset "<OFFSET>" --mode all --out-dir "./.pdf-toc-check" --json
 ```
 
 `items[]` 会按物理页去重，并列出该页对应的所有标题和印刷页码；`rendered.files` 是 6×3 拼图。核对不一致时用 `--page-map` 修正。
@@ -221,8 +227,8 @@ uv run --script scripts/pdf_toc.py batch "books" --layout alongside --json
   "defaults": { "mode": "replace", "suffix": ".toc", "layout": "mirror" },
   "items": [
     { "pdf": "book-a.pdf", "toc": "book-a.toc.json", "pageMode": "physical" },
-    { "pdf": "sub/book-b.pdf", "toc": "sub/book-b.toc.md", "offset": 21 },
-    { "pdf": "book-c.pdf", "toc": "book-c.toc.json", "pageMap": { "6": 27, "95": 116 } }
+    { "pdf": "sub/book-b.pdf", "toc": "sub/book-b.toc.md", "pageMap": "sub/book-b.pageMap.json" },
+    { "pdf": "book-c.pdf", "toc": "book-c.toc.json", "pageMode": "physical" }
   ]
 }
 ```

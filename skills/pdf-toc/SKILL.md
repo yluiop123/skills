@@ -4,7 +4,7 @@ description: "PDF bookmarks / table of contents (TOC / Outline) generator for te
 license: MIT
 compatibility: Requires Python 3.9+ and uv. Dependencies are installed by uv from the script's PEP 723 header.
 metadata:
-  version: "1.4.1"
+  version: "1.5.0"
 ---
 
 # PDF 目录（书签）助手
@@ -19,6 +19,17 @@ metadata:
 - “Add bookmarks to the PDFs in `D:\books\history`”
 
 中英文 TOC 都支持；标题按原文保留，不翻译。
+
+## 语言
+
+**用用户请求的语言回复。** 英文触发就用英文提问、英文状态、英文报告；中文触发就用中文。
+
+- `Add a table of contents to ...` → English questions and English final report.
+- `请给 ... 增加目录` → 中文提问和中文报告。
+- 混合语言 → 跟随用户主要使用的语言；不确定时用英文。
+- 绝对不要翻译 PDF 里的目录标题；书签标题保持原文。
+- 命令和 JSON 字段不变；CLI 输出的中文提示由你翻译给用户。
+- 始终用 `--json` 解析结果，不要直接把中文 CLI 输出贴给英文用户。
 
 ## 铁律
 
@@ -37,12 +48,19 @@ uv --version
 ```
 
 - 有 → 进入 0.2。
-- 没有 → 用提问工具问用户：
+- 没有 → 用提问工具问用户（按用户语言）：
 
   > 这个 skill 需要先安装 uv（只需一次）。安装会从 astral.sh 下载，可能弹出权限提示。是否安装？
   > - 安装 uv（推荐）
   > - 我自己安装
   > - 取消
+
+  English user:
+
+  > This skill needs `uv` once. The official installer downloads from astral.sh and may trigger a permission prompt. Install it now?
+  > - Install uv (recommended)
+  > - I'll install it myself
+  > - Cancel
 
   用户同意后按平台执行官方安装脚本：
 
@@ -97,6 +115,38 @@ uv run --script "<技能目录>/scripts/pdf_toc.py" doctor --json
 - 已有书签默认替换；如果检测到旧书签，在报告里说明。
 - 目录来源默认自动读取；只有读不到目录时才请用户提供文件/文本。
 
+### English question template
+
+If the user writes in English, ask in English with the same two questions. OpenCode example:
+
+```json
+{
+  "questions": [
+    {
+      "header": "Page verification",
+      "question": "How should I verify the page numbers?",
+      "options": [
+        { "label": "Printed page + offset (recommended)", "description": "Read one page, compute physical = printed + offset; no per-page check" },
+        { "label": "Verify the last page", "description": "Render the last TOC entry's page and confirm its printed page number" },
+        { "label": "Verify every page in the TOC", "description": "Map all entries to physical pages, deduplicate, and check each unique page" }
+      ]
+    },
+    {
+      "header": "Folder output",
+      "question": "How should I write the output for this folder?",
+      "options": [
+        { "label": "New mirror folder (recommended)", "description": "Create <source folder><suffix>/ and keep PDF names and directory structure" },
+        { "label": "Next to each PDF", "description": "Write <source name><suffix>.pdf beside each original" }
+      ]
+    }
+  ]
+}
+```
+
+Only include the folder question when the input is a folder. Use Claude Code's `AskUserQuestion` with the same labels/options if that host is active.
+
+Final status/report must also be English for an English request, including warnings and `OFFSET_MISMATCH`.
+
 ## 第 2 步：读取文件数据（兼容扫描件）
 
 一次扫描拿到 PDF 信息、目录页文字/图片和偏移量：
@@ -132,17 +182,23 @@ uv run --script "<技能目录>/scripts/pdf_toc.py" \
 
 用 `scan` 的 `offset.detected`，或找一个“印刷页 ↔ 物理页”锚点：
 
-```bash
---offset 21
-# 或
---anchor 6=27
+```text
+<OFFSET> = <物理页> - <印刷页>
 ```
+
+```bash
+--offset "<OFFSET>"
+# 或
+--anchor "<印刷页>=<物理页>"
+```
+
+**不要把示例里的 `21` 或 `6=27` 当成默认值。** 每本书、每个 PDF 的偏移都可能不同；必须来自当前 PDF 的 `scan` 或你核对过的一页。代码不会写死偏移；如果传入的 offset 与自动检测值冲突，报告里会出现 `OFFSET_MISMATCH` 警告。
 
 ### 核对最后一页
 
 ```bash
 uv run --script "<技能目录>/scripts/pdf_toc.py" check-pages "<pdf>" \
-  --toc "<toc>" --offset 21 --mode last --out-dir "<临时目录>" --json
+  --toc "<toc>" --offset "<OFFSET>" --mode last --out-dir "<临时目录>" --json
 ```
 
 读取输出的图片，确认页面上实际印刷页码 = `items[].printedPages`。
@@ -151,15 +207,15 @@ uv run --script "<技能目录>/scripts/pdf_toc.py" check-pages "<pdf>" \
 
 ```bash
 uv run --script "<技能目录>/scripts/pdf_toc.py" check-pages "<pdf>" \
-  --toc "<toc>" --offset 21 --mode all --out-dir "<临时目录>" --json
+  --toc "<toc>" --offset "<OFFSET>" --mode all --out-dir "<临时目录>" --json
 ```
 
 - `items[]` 按物理页去重；同一页上的多个标题只出现一次。
 - 读取 `rendered.files`（每张 6×3 拼图），逐页核对。
-- 如果某些页不匹配，整理成 `pageMap.json`：
+- 如果某些页不匹配，整理成 `pageMap.json`（下面是示例，不要照抄）：
 
 ```json
-{ "6": 27, "95": 116, "131": 152 }
+{ "<印刷页>": "<物理页>", "<印刷页>": "<物理页>" }
 ```
 
 页码核对不通过时不要生成，先修正偏移或 pageMap。
@@ -170,7 +226,7 @@ uv run --script "<技能目录>/scripts/pdf_toc.py" check-pages "<pdf>" \
 
 ```bash
 uv run --script "<技能目录>/scripts/pdf_toc.py" add "<pdf>" \
-  --toc "<toc>" --offset 21 --json
+  --toc "<toc>" --offset "<OFFSET>" --json
 ```
 
 需要逐页映射时：
@@ -184,11 +240,11 @@ uv run --script "<技能目录>/scripts/pdf_toc.py" add "<pdf>" \
 ```bash
 # 新建文件夹（推荐）
 uv run --script "<技能目录>/scripts/pdf_toc.py" batch "<文件夹>" \
-  --layout mirror --offset 21 --json
+  --layout mirror --offset "<OFFSET>" --json
 
 # 每个 PDF 同目录
 uv run --script "<技能目录>/scripts/pdf_toc.py" batch "<文件夹>" \
-  --layout alongside --offset 21 --json
+  --layout alongside --offset "<OFFSET>" --json
 ```
 
 如果每本 PDF 偏移不同，用 manifest（`sourceRoot` + `layout` + `offset`/`pageMap`），见 [CLI.md](CLI.md)。
@@ -212,7 +268,7 @@ uv run --script "<技能目录>/scripts/pdf_toc.py" batch "<文件夹>" \
 ```text
 已生成：D:\books\Java 8实战.toc.pdf
 书签：313 个 / 5 级
-页码：印刷页 +21 → 物理页
+页码：印刷页 +<OFFSET> → 物理页
 原文件：未修改
 校验：通过
 ```
@@ -229,9 +285,9 @@ uv run --script "<技能目录>/scripts/pdf_toc.py" batch "<文件夹>" \
 ```bash
 uv run --script "<技能目录>/scripts/pdf_toc.py" doctor --json
 uv run --script "<技能目录>/scripts/pdf_toc.py" scan "<pdf>" --pages 1-40 --out-dir "<dir>" --json
-uv run --script "<技能目录>/scripts/pdf_toc.py" check-pages "<pdf>" --toc "<toc>" --offset 21 --mode last|all --out-dir "<dir>" --json
-uv run --script "<技能目录>/scripts/pdf_toc.py" add "<pdf>" --toc "<toc>" --offset 21 --json
-uv run --script "<技能目录>/scripts/pdf_toc.py" batch "<dir>" --layout mirror|alongside --offset 21 --json
+uv run --script "<技能目录>/scripts/pdf_toc.py" check-pages "<pdf>" --toc "<toc>" --offset "<OFFSET>" --mode last|all --out-dir "<dir>" --json
+uv run --script "<技能目录>/scripts/pdf_toc.py" add "<pdf>" --toc "<toc>" --offset "<OFFSET>" --json
+uv run --script "<技能目录>/scripts/pdf_toc.py" batch "<dir>" --layout mirror|alongside --offset "<OFFSET>" --json
 uv run --script "<技能目录>/scripts/pdf_toc.py" verify "<output>" --json
 ```
 

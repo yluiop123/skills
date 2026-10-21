@@ -25,7 +25,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-VERSION = "1.4.1"
+VERSION = "1.5.0"
 DEFAULT_SUFFIX = ".toc"
 PAGE_MODE_VALUES = ("auto", "physical", "printed")
 MODE_VALUES = ("replace", "merge", "keep")
@@ -1521,6 +1521,25 @@ def add_pdf(
                     "hint": "请用 --offset N 或 --anchor 印刷页=物理页 明确指定。",
                 }
             )
+
+    if (
+        effective_mode == "printed"
+        and explicit_offset is not None
+        and detected
+        and detected.get("detected") is not None
+        and detected.get("confidence") in ("high", "medium")
+        and int(detected["detected"]) != int(explicit_offset)
+    ):
+        warnings.append(
+            {
+                "code": "OFFSET_MISMATCH",
+                "message": (
+                    f"你指定的偏移是 {explicit_offset}，但自动检测到的偏移是 {detected['detected']}。"
+                    "请确认没有照抄示例值。"
+                ),
+                "hint": "如果当前 PDF 的页码确实不同，可忽略；否则改用检测到的偏移。",
+            }
+        )
 
     if text_analysis and text_analysis["text"]["scanned"] and effective_mode != "physical" and not offset_provided:
         warnings.append(

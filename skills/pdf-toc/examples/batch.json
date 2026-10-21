@@ -13,7 +13,7 @@
     {
       "pdf": "book-b.pdf",
       "toc": "book-b.toc.md",
-      "offset": 21
+      "pageMode": "physical"
     }
   ]
 }

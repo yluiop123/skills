@@ -2,161 +2,128 @@
 
 [![skills.sh](https://skills.sh/b/yluiop123/skills)](https://skills.sh/yluiop123/skills)
 
-[English](README.en.md)
+**English** | [简体中文](README.zh-CN.md)
 
-在 Agent（OpenCode / Claude Code / Cursor / Codex 等）里说一句话，就能给 PDF 加目录（书签 / Outline）。
+Add a table of contents (bookmarks / PDF outline) to PDFs from your Agent — OpenCode, Claude Code, Cursor, Codex, and other Agent Skills hosts.
 
-**你不需要运行任何脚本。** Agent 会检查环境、识别目录和页码、在工具里向你确认，然后写入新文件。运行环境只使用 `uv run --script`；不需要 pip、pipx 或虚拟环境。
+**You do not run any scripts.** The Agent checks the environment, reads the TOC, asks you to confirm the verification mode, writes a new PDF, and reports the result.
 
-## 怎么触发
+## Trigger
 
-安装 Skill 后，直接说：
+After installing the skill, say:
 
-> 请给 `D:\books\Java 8实战.pdf` 增加目录
+> Add a table of contents to `D:\books\Java 8实战.pdf`
 
-> 请给 `D:\books\历史` 里的 PDF 文件增加目录
+> Add bookmarks to the PDFs in `D:\books\history`
 
-也可以说：
+Also works for:
 
-- “给这本书加书签”
-- “根据这个目录文件生成 PDF 书签”
-- “批量给这个文件夹里的扫描书加目录”
+- “Add bookmarks to this PDF”
+- “Build a PDF outline from this TOC file”
+- “Batch-add TOCs to the scanned books in this folder”
 
-## 安装 Skill
+## Install
 
 ```bash
 npx skills add https://github.com/yluiop123/skills --skill pdf-toc
 ```
 
-安装到全局：
+Global install:
 
 ```bash
 npx skills add https://github.com/yluiop123/skills --skill pdf-toc -g
 ```
 
-指定 Agent、跳过交互：
+## What happens
 
-```bash
-npx skills add https://github.com/yluiop123/skills --skill pdf-toc \
-  -a opencode -a claude-code -y
-```
+The Agent replies in the language of your request: English request → English questions and report; Chinese request → Chinese.
 
-> `npx skills` 需要 Node.js 22.20 或更高版本。
+1. The Agent checks `uv`. If uv is missing, it asks whether to install it (official installer, once). Python and pypdf/pypdfium2/Pillow are then installed automatically by uv.
+2. It scans the PDF: text vs. scanned, page count, existing bookmarks, page-label offset.
+3. It asks you exactly two things:
+   - **Page verification**: printed page + offset (recommended) / verify the last page / verify every page referenced by the TOC.
+   - **Folder output** (only for folders): mirror folder with unchanged names and structure (recommended), or output next to each PDF with a suffix.
+4. It reads the TOC:
+   - text PDFs: extracts page text;
+   - scanned PDFs: renders TOC pages as 6×3 contact sheets and reads them visually.
+5. It generates a new PDF with the outline and verifies every bookmark.
+6. It reports the output path, bookmark count, page mode, warnings, and verification result in the chat.
 
-## 触发后会发生什么
+## Output
 
-### 1. 自动检查环境
+Single file:
 
-Agent 自动检查 uv；没有 uv 会先问你是否安装（官方脚本，只需一次）。Python 和 pypdf / pypdfium2 / Pillow 由 uv 自动下载安装，缺依赖会弹出授权提示。
-
-### 2. 自动检查 PDF
-
-Agent 自动判断：
-
-- 文字版还是扫描件
-- 总页数
-- 是否已有书签
-- 是否自带页码标签
-- 能否自动检测“印刷页码 → PDF 物理页”偏移
-
-### 3. 在工具里问你
-
-Agent 只问必要的两项：
-
-**1）页码核对方式**
-
-- 只用印刷页 + 偏移量（推荐）
-- 核对最后一页
-- 核对目录涉及的每一页
-
-**2）如果输入是文件夹，确认输出布局**
-
-- 新建文件夹（`源文件夹名 + .toc`），PDF 文件名和目录结构不变（推荐）
-- 每个 PDF 输出到各自同目录，文件名加 `.toc`
-
-其他都用默认规则：
-
-- 单个 PDF 默认同目录 `book.pdf → book.toc.pdf`
-- 已有书签默认替换
-- 目录默认自动读取；读不到时才请你提供
-
-### 4. 读取目录和页码
-
-Agent 调用一次 `scan`：
-
-- 文字版：读取 PDF 文字，定位目录页。
-- 扫描件：把目录页渲染成 6×3 拼图，用视觉识别；不会逐页浏览全书。
-- 同时得到总页数、文字层、已有书签、印刷页码偏移。
-
-如果选择了核对页码：
-
-- 核对最后一页：只渲染最后一项所在页。
-- 核对每一页：把所有目录项映射到物理页，**按页去重**；两个章节在同一页只读一次。
-
-### 5. 生成并校验
-
-Agent 生成新的带目录 PDF，并重新打开校验标题、页码、层级和页面目标。原文件不修改。
-
-### 6. 汇报结果
-
-Agent 在对话里汇报输入/输出、书签数量、页码模式、校验结果和警告，不生成额外的报告文件。
-
-## 输出规则
-
-### 单个文件
-
-默认输出到原 PDF 同目录：
-
-```
+```text
 book.pdf  →  book.toc.pdf
 ```
 
-不修改 `book.pdf`。输出已存在时自动改名 `book.toc-2.pdf`，不会覆盖。
+Folder, mirror mode (default):
 
-### 文件夹：镜像目录（默认）
-
-给一个文件夹时，新建 `<文件夹名>.toc/`，保持目录结构和文件名：
-
-```
+```text
 books/                      books.toc/
-  Java 8实战.pdf      →      Java 8实战.pdf
-  历史/中国战争史.pdf  →      历史/中国战争史.pdf
+  book-a.pdf          →      book-a.pdf
+  vol-1/book-b.pdf    →      vol-1/book-b.pdf
 ```
 
-### 文件夹：同目录加后缀
+Folder, alongside mode:
 
-也可以选择：
-
-```
-books/                      books/
-  Java 8实战.pdf      →      Java 8实战.toc.pdf
-  历史/中国战争史.pdf  →      历史/中国战争史.toc.pdf
+```text
+books/book-a.pdf  →  books/book-a.toc.pdf
 ```
 
-## 支持的情况
+The original PDF is never modified.
 
-- 文字版 PDF
-- 扫描件 PDF（书签不依赖文字层）
-- 中文 / 英文 / 中英混排
-- 英文编号：Chapter / Section / Part / Appendix；中文编号：第一章 / 第一节 / 1.1
-- 单文件 / 多文件 / 整个文件夹
-- 已有书签：替换、合并、保留
-- 页码：整体偏移、锚点、逐页 pageMap、物理页
-- 加密 PDF：会拒绝并提示先解密
-- 损坏 PDF：会报错，不会写出半成品
+## Languages
 
-## 安全
+The skill is language-agnostic:
 
-- 原文件只读；输出路径等于原文件时直接拒绝。
-- 原子写入，失败不会留下半个文件。
-- 默认不覆盖已有输出。
-- 写入后自动校验；校验失败不交付。
-- 重新保存会使已有数字签名失效；Agent 会先提示。
+- Chinese, English, and mixed Chinese/English titles are preserved.
+- TOC parsing understands:
+  - Chinese numbering: `第一章`, `第一节`, `第一`, `1.1`
+  - English numbering: `Chapter 1`, `Section 1.1`, `Part I`, `Appendix A`
+  - Markdown indentation and JSON `children`.
+- Page-number detection understands `Page 12`, `12  Chapter 1`, `Chapter 1  12`, and Chinese page labels.
+- Scanned pages in any language can be read visually by the Agent.
 
-## 开发者
+Example English TOC:
 
-CLI 的安装、参数和批量 manifest 见 [CLI.md](CLI.md)。
+```markdown
+Chapter 1 Introduction ......... 1
+  Section 1.1 Background ....... 2
+    1.1.1 Details .............. 3
+Chapter 2 Methods .............. 10
+Appendix A Glossary ............ 20
+```
+
+## Page mapping
+
+- **Offset**: `physical = printed + offset`. Compute the offset from the current PDF (`scan` or one verified page); never copy a sample value from another book.
+- **Page map**: for discontinuous or missing page numbers. Example shape only — use values verified for your PDF:
+
+```json
+{ "<printed>": "<physical>" }
+```
+
+- **Physical pages**: if the TOC already uses PDF page numbers.
+
+## Safety
+
+- Read-only input; output equal to input is rejected.
+- Atomic write; default no overwrite (renames to `-2`, `-3`).
+- Encrypted PDFs are rejected.
+- Verification reopens the output and checks titles, pages, levels, and destinations.
+- Re-saving invalidates existing digital signatures; the Agent warns first.
+
+## Developer CLI
+
+See [CLI.md](CLI.md). Runtime uses **uv only**:
+
+```bash
+uv run --script scripts/pdf_toc.py doctor --json
+```
+
+No pip, pipx, or local `.venv`.
 
 ## License
 
-MIT。依赖 pypdf（BSD-3-Clause）。
+MIT. pypdf is BSD-3-Clause; page rendering uses pypdfium2 + Pillow.
