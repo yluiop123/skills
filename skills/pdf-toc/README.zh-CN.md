@@ -49,6 +49,8 @@ npx skills add https://github.com/yluiop123/skills --skill pdf-toc \
 
 Agent 用你请求的语言回复：英文请求用英文提问和汇报，中文请求用中文。
 
+Agent 用宿主自带的提问/选择工具提问；如果宿主没有这个工具，或弹窗不可用，就用普通文本列出同样的选项并等待回复。不会跳过提问，也不会替你默认选择。
+
 Agent 自动检查 uv；没有 uv 会先问你是否安装（官方脚本，只需一次）。Python 和 pypdf / pypdfium2 / Pillow 由 uv 自动下载安装，缺依赖会弹出授权提示。
 
 ### 2. 自动检查 PDF

@@ -38,6 +38,8 @@ npx skills add https://github.com/yluiop123/skills --skill pdf-toc -g
 
 The Agent replies in the language of your request: English request → English questions and report; Chinese request → Chinese.
 
+It asks through the host's question/choice tool. If the host has no such tool, or the popup is unavailable, it asks the same options in plain text and waits for your reply. It never skips the questions or silently picks a default.
+
 1. The Agent checks `uv`. If uv is missing, it asks whether to install it (official installer, once). Python and pypdf/pypdfium2/Pillow are then installed automatically by uv.
 2. It scans the PDF: text vs. scanned, page count, existing bookmarks, page-label offset.
 3. It asks you exactly two things:

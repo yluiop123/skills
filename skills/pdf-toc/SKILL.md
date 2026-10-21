@@ -1,15 +1,17 @@
 ---
 name: pdf-toc
-description: "PDF bookmarks / table of contents (TOC / Outline) generator for text and scanned PDFs, single file or folder batch. Triggers include “add a table of contents to xxx.pdf” and “add bookmarks to the PDFs in xxx folder”. 给 PDF 添加/替换目录：用户说“请给 xxx.pdf 增加目录”“请给 xxx 里的 pdf 文件增加目录”“给这本书加书签”“批量给扫描书加目录”时触发。Agent 自动读取目录和页码、在工具中确认核对方式，生成新的带目录 PDF 并汇报结果，绝不修改原文件。"
+description: "PDF bookmarks / table of contents (TOC / Outline) generator for text and scanned PDFs, single file or folder batch. Triggers include “add a table of contents to xxx.pdf” and “add bookmarks to the PDFs in xxx folder”. 给 PDF 添加/替换目录：用户说“请给 xxx.pdf 增加目录”“请给 xxx 里的 pdf 文件增加目录”“给这本书加书签”“批量给扫描书加目录”时触发。Agent 自动读取目录和页码、在宿主中确认核对方式，生成新的带目录 PDF 并汇报结果，绝不修改原文件。"
 license: MIT
 compatibility: Requires Python 3.9+ and uv. Dependencies are installed by uv from the script's PEP 723 header.
 metadata:
-  version: "1.5.2"
+  version: "1.5.3"
 ---
 
 # PDF 目录（书签）助手
 
 只使用 `uv run --script` 运行，不需要用户手动执行脚本，也不使用 pip / pipx / 虚拟环境。
+
+执行顺序：环境检查 → **提问并等待回答** → 扫描/读目录 → 生成 → 校验 → 汇报。任何宿主都不得跳过提问。
 
 ## 触发示例
 
@@ -36,7 +38,7 @@ metadata:
 1. **只使用 uv**：所有命令都通过 `uv run --script "<技能目录>/scripts/pdf_toc.py"`。不要用 `python`、`pip`、`pipx` 或临时脚本。
 2. **不写临时脚本**：不要用 `fitz` / PyMuPDF，也不要自己拼图；`scan` / `check-pages` 已经内置渲染和拼图。
 3. **不改原文件**：只生成新文件，默认同目录加后缀。
-4. **先确认，再生成**：用提问工具确认“页码核对方式”；如果是文件夹，再确认输出布局。
+4. **先确认，再生成（所有宿主）**：必须用宿主提问工具确认“页码核对方式”；如果是文件夹，再确认输出布局。没有提问工具就用文本问；用户回答前不得执行 `add` / `batch`。
 5. **不重复读页**：`check-pages` 会按物理页去重，两个章节在同一页时只渲染一次。
 
 ## 第 0 步：环境检查
@@ -96,11 +98,16 @@ uv run --script "<技能目录>/scripts/pdf_toc.py" doctor --json
 
 ## 第 1 步：提问（只问必要的）
 
-用 OpenCode `question` / Claude Code `AskUserQuestion`。
+**所有宿主都必须提问，禁止跳过。** 用当前 Agent 自带的提问/选择工具：
+OpenCode `question`、Claude Code `AskUserQuestion`、Cursor / Codex / Gemini CLI 等宿主的同类工具。
 
-只问两组。文件夹问题只在输入是文件夹时加入。
+- 只问两组；文件夹问题只在输入是文件夹时加入。
+- 用户回答前，禁止执行 `add` / `batch`；不要自动选择推荐项。
+- 如果宿主没有提问工具、调用失败，或用户看不到弹窗：立刻改用普通文本列出同样的选项，然后停止并等待回复。
 
-### 中文提问模板（OpenCode `question`）
+### 中文提问模板
+
+下面是 OpenCode `question` 的参数结构。其他宿主把同样的 `header` / `question` / `options` 映射到自己的提问工具；不要因为不是 OpenCode 就跳过提问。
 
 ```json
 {
@@ -126,7 +133,9 @@ uv run --script "<技能目录>/scripts/pdf_toc.py" doctor --json
 }
 ```
 
-### English question template (OpenCode `question`)
+### English question template
+
+Same `header` / `question` / `options` structure; map it to the host's question tool. Do not skip the questions just because the host is not OpenCode.
 
 ```json
 {
@@ -152,7 +161,45 @@ uv run --script "<技能目录>/scripts/pdf_toc.py" doctor --json
 }
 ```
 
-输入是文件夹时才加入文件夹问题；单个文件不要问。Claude Code 用 `AskUserQuestion` 时使用相同的 `header` / `question` / `label` / `description`，字段名按宿主调整。
+输入是文件夹时才加入文件夹问题；单个文件不要问。Claude Code、Cursor、Codex、Gemini CLI 等宿主使用相同的 `header` / `question` / `label` / `description`，字段名按宿主调整。
+
+### 没有提问工具时的纯文本兜底
+
+如果宿主没有提问工具，或调用失败、用户看不到弹窗，直接把下面的选项作为普通文本发给用户，然后停止等待回复；不要省略选项，也不要替用户选。
+
+中文：
+
+```text
+页码怎么核对？
+1. 印刷页 + 偏移（推荐）：最快，只读一页；适合页码连续、偏移固定。缺点：局部错页/缺页发现不了，偏移错会全部偏移。
+2. 核对最后一页：比逐页快，能确认整体偏移和末尾。缺点：只抽查末尾，前面局部错页发现不了。
+3. 核对目录涉及的每一页：最可靠，能发现局部错页/缺页。缺点：最慢，大书耗时和 token 高。
+请回复 1 / 2 / 3。
+
+如果是文件夹，再问：
+文件夹输出方式？
+1. 新建镜像文件夹（推荐）：保持 PDF 文件名和目录结构。
+2. 每个 PDF 同目录：输出到原文件旁边。
+请回复 1 / 2。
+```
+
+English:
+
+```text
+How should I verify the page numbers?
+1. Printed page + offset (recommended): fastest, reads one page; good for continuous numbering and a fixed offset. Cons: misses local errors/missing pages; a wrong offset shifts everything.
+2. Verify the last page: faster than a full check; confirms the overall offset and the end. Cons: samples only the end; earlier local errors go unnoticed.
+3. Verify every page in the TOC: most reliable; catches local errors and missing pages. Cons: slowest; large books cost more time and tokens.
+Reply 1 / 2 / 3.
+
+If this is a folder, also ask:
+Folder output?
+1. New mirror folder (recommended): keep PDF names and directory structure.
+2. Next to each PDF: write beside each original.
+Reply 1 / 2.
+```
+
+用户回复后，按选择继续；不要重复问已经回答过的问题。
 
 其他规则（不需要问）：
 
@@ -236,6 +283,8 @@ uv run --script "<技能目录>/scripts/pdf_toc.py" check-pages "<pdf>" \
 页码核对不通过时不要生成，先修正偏移或 pageMap。
 
 ## 第 4 步：生成带目录 PDF
+
+执行前确认第 1 步已经得到用户明确选择；没有就回到第 1 步，不要生成。
 
 ### 单个文件
 
