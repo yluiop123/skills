@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.9"
-# dependencies = ["pypdf>=6.0", "pypdfium2>=4.30.0", "pillow>=10.0"]
+# dependencies = ["pypdf>=6,<7", "pypdfium2>=4.30,<6", "pillow>=10,<12"]
 # ///
 """Add or replace PDF bookmarks (outline / TOC) safely.
 
@@ -22,11 +22,10 @@ import shutil
 import sys
 import tempfile
 import time
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 DEFAULT_SUFFIX = ".toc"
 PAGE_MODE_VALUES = ("auto", "physical", "printed")
 MODE_VALUES = ("replace", "merge", "keep")
@@ -1910,7 +1909,6 @@ def build_parser() -> argparse.ArgumentParser:
     add_parser.add_argument("--dry-run", action="store_true")
     add_parser.add_argument("--no-verify", action="store_true")
     add_parser.add_argument("--no-open-panel", action="store_true")
-    add_parser.add_argument("--report", help="生成 Markdown 报告到这个路径")
 
     batch_parser = subparsers.add_parser("batch", help="批量处理目录或 manifest.json")
     _add_common(batch_parser)
@@ -1935,7 +1933,6 @@ def build_parser() -> argparse.ArgumentParser:
     batch_parser.add_argument("--dry-run", action="store_true")
     batch_parser.add_argument("--no-verify", action="store_true")
     batch_parser.add_argument("--no-open-panel", action="store_true")
-    batch_parser.add_argument("--report", help="生成 Markdown 报告到这个路径")
     batch_parser.add_argument("--exclude", action="append", default=[])
 
     verify_parser = subparsers.add_parser("verify", help="校验 PDF 书签")
@@ -1944,72 +1941,6 @@ def build_parser() -> argparse.ArgumentParser:
     verify_parser.add_argument("--expect-count", type=int)
 
     return parser
-
-
-def _write_add_report(target: str | Path, result: dict[str, Any]) -> str:
-    path = Path(target).resolve()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    verification = result.get("verification") or {}
-    lines = [
-        "# PDF 目录生成报告",
-        "",
-        f"- 时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-        f"- 输入：`{result['input']}`",
-        f"- 输出：`{result['output']}`",
-        f"- 页数：{result['pages']}",
-        f"- 书签：{result['entries']} 个 / {result['levels']} 级",
-        f"- 模式：{result['mode']}",
-    ]
-    if result.get("pageMapEntries"):
-        lines.append(f"- 页码：pageMap（{result['pageMapEntries']} 条）")
-    elif result["pageMode"] == "printed":
-        sign = "+" if result["offset"] >= 0 else ""
-        lines.append(f"- 页码：印刷页 {sign}{result['offset']} → 物理页")
-    else:
-        lines.append("- 页码：PDF 物理页")
-    if verification:
-        lines.append(f"- 校验：{'通过' if verification.get('ok') else '未通过'}（{verification.get('count')} / {verification.get('expectedCount')}）")
-    warnings = result.get("warnings") or []
-    lines.append(f"- 警告：{len(warnings)} 条")
-    if warnings:
-        lines.append("")
-        lines.append("## 警告")
-        for warning in warnings:
-            line = f"第 {warning['line']} 行：" if warning.get("line") else ""
-            lines.append(f"- {line}{warning['message']}")
-    lines.append("")
-    lines.append("## 预览")
-    for item in result.get("preview") or []:
-        lines.append(f"- {'  ' * (int(item['level']) - 1)}{item['title']} → 第 {item['physicalPage']} 页")
-    if result["entries"] > len(result.get("preview") or []):
-        lines.append(f"- ……其余 {result['entries'] - len(result.get('preview') or [])} 项")
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return str(path)
-
-
-def _write_batch_report(target: str | Path, summary: dict[str, Any]) -> str:
-    path = Path(target).resolve()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    lines = [
-        "# PDF 目录批量报告",
-        "",
-        f"- 时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-        f"- 总数：{summary['total']}",
-        f"- 成功：{summary['succeeded']}",
-        f"- 失败：{summary['failed']}",
-        f"- 跳过：{summary['skipped']}",
-        f"- 布局：{summary.get('layout')}",
-        "",
-        "| 状态 | 输入 | 输出 | 书签 |",
-        "|---|---|---|---|",
-    ]
-    for item in summary.get("items", []):
-        status = "成功" if item.get("ok") else ("跳过" if item.get("skipped") else "失败")
-        output = item.get("output") or ""
-        entries = item.get("entries", "")
-        lines.append(f"| {status} | `{item.get('input') or ''}` | `{output}` | {entries} |")
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return str(path)
 
 
 def _print_add(result: dict[str, Any]) -> None:
@@ -2072,14 +2003,10 @@ def _cmd_add(args) -> int:
         verify=not args.no_verify,
         open_panel=not args.no_open_panel,
     )
-    if args.report:
-        result["report"] = _write_add_report(args.report, result)
     if args.json:
         emit_json({"ok": True, "command": "add", **result})
     else:
         _print_add(result)
-        if result.get("report"):
-            human(f"报告：{result['report']}")
     return 0
 
 
@@ -2501,8 +2428,6 @@ def _cmd_batch(args) -> int:
         "items": results,
         "durationMs": int((time.time() - started) * 1000),
     }
-    if args.report:
-        summary["report"] = _write_batch_report(args.report, summary)
     if args.json:
         emit_json(summary)
     else:
@@ -2510,8 +2435,6 @@ def _cmd_batch(args) -> int:
         human(f"完成：成功 {succeeded}，失败 {failed}，跳过 {skipped}")
         if mirror_root:
             human(f"输出目录：{mirror_root}")
-        if summary.get("report"):
-            human(f"报告：{summary['report']}")
         if not ok:
             human("有项目未成功处理，请查看上方错误或使用 --json 获取详情。")
     return 0 if ok else 1

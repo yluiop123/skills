@@ -1,10 +1,10 @@
 ---
 name: pdf-toc
-description: 给 PDF 添加或替换目录（书签 / Outline），兼容文字版和扫描件，支持单个文件和整个文件夹。用户说“请给 xxx.pdf 增加目录”“请给 xxx 里的 pdf 文件增加目录”“给这本书加书签”“批量给扫描书加目录”时触发。Agent 自动读取目录和页码、在工具中确认核对方式，生成新的带目录 PDF 和报告，绝不修改原文件。
+description: 给 PDF 添加或替换目录（书签 / Outline），兼容文字版和扫描件，支持单个文件和整个文件夹。用户说“请给 xxx.pdf 增加目录”“请给 xxx 里的 pdf 文件增加目录”“给这本书加书签”“批量给扫描书加目录”时触发。Agent 自动读取目录和页码、在工具中确认核对方式，生成新的带目录 PDF 并汇报结果，绝不修改原文件。
 license: MIT
 compatibility: Requires Python 3.9+ and uv. Dependencies are installed by uv from the script's PEP 723 header.
 metadata:
-  version: "1.2.0"
+  version: "1.3.0"
 ---
 
 # PDF 目录（书签）助手
@@ -125,7 +125,7 @@ uv run --script "<技能目录>/scripts/pdf_toc.py" check-pages "<pdf>" \
 
 ```bash
 uv run --script "<技能目录>/scripts/pdf_toc.py" add "<pdf>" \
-  --toc "<toc>" --offset 21 --report "<临时目录>/report.md" --json
+  --toc "<toc>" --offset 21 --json
 ```
 
 需要逐页映射时：
@@ -139,20 +139,20 @@ uv run --script "<技能目录>/scripts/pdf_toc.py" add "<pdf>" \
 ```bash
 # 新建文件夹（推荐）
 uv run --script "<技能目录>/scripts/pdf_toc.py" batch "<文件夹>" \
-  --layout mirror --offset 21 --report "<临时目录>/report.md" --json
+  --layout mirror --offset 21 --json
 
 # 每个 PDF 同目录
 uv run --script "<技能目录>/scripts/pdf_toc.py" batch "<文件夹>" \
-  --layout alongside --offset 21 --report "<临时目录>/report.md" --json
+  --layout alongside --offset 21 --json
 ```
 
 如果每本 PDF 偏移不同，用 manifest（`sourceRoot` + `layout` + `offset`/`pageMap`），见 [CLI.md](CLI.md)。
 
 批量里的 `--offset` 是统一偏移；不同书不同偏移时必须用 manifest。
 
-## 第 5 步：生成报告
+## 第 5 步：汇报结果（不写报告文件）
 
-`add` / `batch` 的 `--report` 会写 Markdown 报告，包含：
+不生成 Markdown 报告文件。直接根据 `add` / `batch` 的 JSON 结果，在对话里汇报：
 
 - 输入 / 输出
 - 页数
@@ -162,7 +162,7 @@ uv run --script "<技能目录>/scripts/pdf_toc.py" batch "<文件夹>" \
 - 警告
 - 前几项预览
 
-把报告路径和关键结果给用户。报告示例：
+示例：
 
 ```text
 已生成：D:\books\Java 8实战.toc.pdf
@@ -170,7 +170,6 @@ uv run --script "<技能目录>/scripts/pdf_toc.py" batch "<文件夹>" \
 页码：印刷页 +21 → 物理页
 原文件：未修改
 校验：通过
-报告：C:\...\report.md
 ```
 
 ## 速度原则
@@ -186,12 +185,12 @@ uv run --script "<技能目录>/scripts/pdf_toc.py" batch "<文件夹>" \
 uv run --script "<技能目录>/scripts/pdf_toc.py" doctor --json
 uv run --script "<技能目录>/scripts/pdf_toc.py" scan "<pdf>" --pages 1-40 --out-dir "<dir>" --json
 uv run --script "<技能目录>/scripts/pdf_toc.py" check-pages "<pdf>" --toc "<toc>" --offset 21 --mode last|all --out-dir "<dir>" --json
-uv run --script "<技能目录>/scripts/pdf_toc.py" add "<pdf>" --toc "<toc>" --offset 21 --report "<report.md>" --json
-uv run --script "<技能目录>/scripts/pdf_toc.py" batch "<dir>" --layout mirror|alongside --offset 21 --report "<report.md>" --json
+uv run --script "<技能目录>/scripts/pdf_toc.py" add "<pdf>" --toc "<toc>" --offset 21 --json
+uv run --script "<技能目录>/scripts/pdf_toc.py" batch "<dir>" --layout mirror|alongside --offset 21 --json
 uv run --script "<技能目录>/scripts/pdf_toc.py" verify "<output>" --json
 ```
 
-## 报告模板
+## 结果模板
 
 ```text
 已生成：<输出路径>
@@ -199,5 +198,4 @@ uv run --script "<技能目录>/scripts/pdf_toc.py" verify "<output>" --json
 页码：<偏移 / pageMap / 物理页>
 原文件：未修改
 校验：<通过 / 未通过>
-报告：<report.md 路径>
 ```

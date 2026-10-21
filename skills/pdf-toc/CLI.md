@@ -263,7 +263,6 @@ pdf-toc verify <pdf> [--expect-count N] [--json]
 | `--anchor <printed=physical>` | 锚点校准，可重复 |
 | `--page-map <file>` | 自定义印刷页 → 物理页映射 |
 | `--layout mirror\|alongside` | 批量输出布局（`batch`） |
-| `--report <file>` | 生成 Markdown 报告 |
 | `--on-exists rename\|error\|overwrite` | 输出冲突策略，默认 `rename` |
 | `--dry-run` | 只预览，不写文件 |
 | `--no-verify` | 跳过写入后的自动校验 |

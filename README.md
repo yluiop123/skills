@@ -43,7 +43,7 @@ npx skills add https://github.com/yluiop123/skills --list
 
 > 请给 `D:\books\历史` 里的 PDF 文件增加目录
 
-Agent 会自动检查环境、识别目录和页码、在工具里向你确认，然后写入新文件并生成报告。**你不需要手动运行任何脚本。** 运行环境只使用 `uv`。
+Agent 会自动检查环境、识别目录和页码、在工具里向你确认，然后写入新文件并汇报结果。**你不需要手动运行任何脚本。** 运行环境只使用 `uv`。
 
 详细说明见 [`skills/pdf-toc/README.md`](skills/pdf-toc/README.md)。
 
@@ -55,7 +55,6 @@ skills/
     ├── SKILL.md
     ├── README.md          # 用户说明
     ├── CLI.md             # 开发者命令行参考
-    ├── pyproject.toml
     ├── scripts/
     │   └── pdf_toc.py
     ├── examples/
