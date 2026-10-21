@@ -72,6 +72,7 @@ uv run --script "<技能目录>/scripts/pdf_toc.py" \
 
 - 文字版：从 `textPages` / `tocCandidates` 解析目录。
 - 扫描件：读取 `rendered.files` 图片，视觉识别目录。
+- 文字版但目录页排版不可读：加 `--render` 强制渲染目录页。
 - 已有书签：`extract` 导出。
 - 如果前 40 页没有目录，调整 `--pages` 再 scan。
 - 整理成 TOC JSON/Markdown（临时文件），页码默认按印刷页记录。
