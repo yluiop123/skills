@@ -4,7 +4,7 @@ description: "PDF bookmarks / table of contents (TOC / Outline) generator for te
 license: MIT
 compatibility: Requires Python 3.9+ and uv. Dependencies are installed by uv from the script's PEP 723 header.
 metadata:
-  version: "1.5.3"
+  version: "1.5.4"
 ---
 
 # PDF 目录（书签）助手
@@ -12,6 +12,8 @@ metadata:
 只使用 `uv run --script` 运行，不需要用户手动执行脚本，也不使用 pip / pipx / 虚拟环境。
 
 执行顺序：环境检查 → **提问并等待回答** → 扫描/读目录 → 生成 → 校验 → 汇报。任何宿主都不得跳过提问。
+
+**先提问，后读文件。** 收到请求后，环境检查完就立刻提问；在用户回答页码核对方式之前，只允许 `uv --version` / `doctor`，不得执行 `scan`、`render`、`extract`、`text`、`check-pages`、`add`、`batch`。不要为了判断文字版/扫描件而先扫描。
 
 ## 触发示例
 
@@ -38,7 +40,7 @@ metadata:
 1. **只使用 uv**：所有命令都通过 `uv run --script "<技能目录>/scripts/pdf_toc.py"`。不要用 `python`、`pip`、`pipx` 或临时脚本。
 2. **不写临时脚本**：不要用 `fitz` / PyMuPDF，也不要自己拼图；`scan` / `check-pages` 已经内置渲染和拼图。
 3. **不改原文件**：只生成新文件，默认同目录加后缀。
-4. **先确认，再生成（所有宿主）**：必须用宿主提问工具确认“页码核对方式”；如果是文件夹，再确认输出布局。没有提问工具就用文本问；用户回答前不得执行 `add` / `batch`。
+4. **先提问，后读 PDF（所有宿主）**：收到请求先确认“页码核对方式”；如果是文件夹，再确认输出布局。用户回答前不得执行 `scan` / `render` / `extract` / `text` / `check-pages` / `add` / `batch`；没有提问工具就用文本问。
 5. **不重复读页**：`check-pages` 会按物理页去重，两个章节在同一页时只渲染一次。
 
 ## 第 0 步：环境检查
@@ -96,7 +98,11 @@ uv run --script "<技能目录>/scripts/pdf_toc.py" doctor --json
 
 > 总结：**uv 需要先安装一次；Python 和 pypdf 等依赖由 uv 自动安装。**
 
-## 第 1 步：提问（只问必要的）
+环境检查完成后立即进入第 1 步提问；不要先 `scan`。
+
+## 第 1 步：先提问（在读取 PDF 之前）
+
+这是收到请求后的第一个动作；不要先 `scan`、`render` 或 `extract`。
 
 **所有宿主都必须提问，禁止跳过。** 用当前 Agent 自带的提问/选择工具：
 OpenCode `question`、Claude Code `AskUserQuestion`、Cursor / Codex / Gemini CLI 等宿主的同类工具。
@@ -210,6 +216,8 @@ Reply 1 / 2.
 Final status/report must also be English for an English request, including warnings and `OFFSET_MISMATCH`.
 
 ## 第 2 步：读取文件数据（兼容扫描件）
+
+前提：第 1 步已经得到用户回答。未回答不得执行下面的 `scan`；不要为了判断文字版/扫描件而先扫描。
 
 一次扫描拿到 PDF 信息、目录页文字/图片和偏移量：
 
