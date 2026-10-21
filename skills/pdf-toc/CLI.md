@@ -292,14 +292,14 @@ pdf-toc verify <pdf> [--expect-count N] [--json]
 ## 测试
 
 ```bash
-python -m unittest discover -s tests -v
+uv run --with pypdf --with pypdfium2 --with pillow python -m unittest discover -s tests -v
 ```
 
 本地端到端测试（需要把两个测试 PDF 的目录通过环境变量传入）：
 
 ```bash
 set PDF_TOC_TEST_DIR=D:\my-project\pdf-menu
-python tests/e2e_local.py
+uv run --with pypdf --with pypdfium2 --with pillow python tests/e2e_local.py
 ```
 
 ## 限制
