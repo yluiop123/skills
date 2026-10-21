@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.9"
-# dependencies = ["pypdf>=6.0"]
+# dependencies = ["pypdf>=6.0", "pypdfium2>=4.30.0", "pillow>=10.0"]
 # ///
 """Add or replace PDF bookmarks (outline / TOC) safely.
 
@@ -19,13 +19,14 @@ import os
 import re
 import secrets
 import shutil
-import subprocess
 import sys
+import tempfile
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 DEFAULT_SUFFIX = ".toc"
 PAGE_MODE_VALUES = ("auto", "physical", "printed")
 MODE_VALUES = ("replace", "merge", "keep")
@@ -1064,6 +1065,276 @@ def extract_text_pages(path: str | Path, pages_spec: str | None = None) -> dict[
     }
 
 
+def _require_render_deps():
+    try:
+        import pypdfium2 as pdfium
+        from PIL import Image, ImageDraw
+    except ImportError as exc:
+        raise CliError(
+            "MISSING_RENDER_DEP",
+            "缺少页面渲染依赖（pypdfium2 / Pillow）。",
+            hint="使用 `uv run --script <本脚本>` 会自动安装；或运行 `python -m pip install pypdfium2 pillow`。",
+            details=str(exc),
+        ) from exc
+    return pdfium, Image, ImageDraw
+
+
+def render_pdf_pages(
+    path: str | Path,
+    pages_spec: str | None,
+    out_dir: str | Path,
+    scale: float | None = None,
+    image_format: str = "png",
+    sheet: bool = False,
+    cols: int = 6,
+    rows: int = 3,
+    quality: int = 82,
+) -> dict[str, Any]:
+    pdfium, Image, ImageDraw = _require_render_deps()
+    target = Path(path).resolve()
+    if not target.is_file():
+        raise CliError("FILE_NOT_FOUND", f"PDF 文件不存在：{target}")
+    output_dir = Path(out_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    if image_format not in ("png", "jpeg", "jpg"):
+        raise CliError("RENDER_FORMAT_INVALID", f"不支持的图片格式：{image_format}", exit_code=2)
+    extension = "jpg" if image_format in ("jpeg", "jpg") else "png"
+    if scale is None:
+        scale = 0.7 if sheet else 1.5
+    try:
+        document = pdfium.PdfDocument(str(target))
+    except Exception as exc:
+        raise CliError("RENDER_FAILED", f"PDF 打开失败：{exc}") from exc
+
+    try:
+        page_count = len(document)
+        indices = parse_page_spec(pages_spec, page_count)
+        files: list[dict[str, Any]] = []
+        if sheet:
+            per_sheet = max(1, int(cols) * int(rows))
+            for start in range(0, len(indices), per_sheet):
+                chunk = indices[start:start + per_sheet]
+                images = []
+                for index in chunk:
+                    page = document[index]
+                    bitmap = page.render(scale=scale)
+                    image = bitmap.to_pil().convert("RGB")
+                    images.append((index + 1, image))
+                width = max(image.width for _, image in images)
+                height = max(image.height for _, image in images)
+                padding = 8
+                label_height = 22
+                canvas = Image.new(
+                    "RGB",
+                    (cols * (width + padding) + padding, rows * (height + padding + label_height) + padding),
+                    "white",
+                )
+                draw = ImageDraw.Draw(canvas)
+                for position, (page_number, image) in enumerate(images):
+                    row, column = divmod(position, cols)
+                    x = padding + column * (width + padding)
+                    y = padding + row * (height + padding + label_height)
+                    draw.text((x + 4, y + 4), f"p.{page_number}", fill="red")
+                    canvas.paste(image, (x, y + label_height))
+                first, last = chunk[0] + 1, chunk[-1] + 1
+                output = output_dir / f"sheet-{first}-{last}.{extension}"
+                if extension == "jpg":
+                    canvas.save(output, quality=quality, optimize=True)
+                else:
+                    canvas.save(output, optimize=True)
+                files.append(
+                    {
+                        "path": str(output),
+                        "type": "sheet",
+                        "firstPage": first,
+                        "lastPage": last,
+                        "width": canvas.width,
+                        "height": canvas.height,
+                    }
+                )
+        else:
+            for index in indices:
+                page = document[index]
+                bitmap = page.render(scale=scale)
+                image = bitmap.to_pil()
+                output = output_dir / f"page-{index + 1:03d}.{extension}"
+                if extension == "jpg":
+                    image.convert("RGB").save(output, quality=quality, optimize=True)
+                else:
+                    image.save(output, optimize=True)
+                files.append(
+                    {
+                        "path": str(output),
+                        "type": "page",
+                        "page": index + 1,
+                        "width": image.width,
+                        "height": image.height,
+                    }
+                )
+        return {
+            "ok": True,
+            "file": str(target),
+            "pageCount": page_count,
+            "outDir": str(output_dir),
+            "mode": "sheet" if sheet else "pages",
+            "scale": scale,
+            "format": extension,
+            "files": files,
+        }
+    except CliError:
+        raise
+    except Exception as exc:
+        raise CliError("RENDER_FAILED", f"页面渲染失败：{exc}") from exc
+    finally:
+        try:
+            document.close()
+        except Exception:
+            pass
+
+
+def scan_pdf(
+    path: str | Path,
+    pages_spec: str | None = None,
+    out_dir: str | Path | None = None,
+    force_render: bool = False,
+    sheet: bool = True,
+    cols: int = 6,
+    rows: int = 3,
+    scale: float | None = None,
+    image_format: str = "png",
+    quality: int = 82,
+) -> dict[str, Any]:
+    """One-shot analysis for TOC recognition.
+
+    Text PDFs return page text; scanned PDFs also render the requested pages.
+    """
+    target = Path(path).resolve()
+    info = inspect_pdf(target)
+    range_spec = pages_spec or "1-40"
+    text_data = extract_text_pages(target, range_spec)
+    has_text = any(item.get("chars", 0) >= 20 for item in text_data["items"])
+    should_render = bool(force_render or info["text"]["scanned"] or not has_text)
+    rendered = None
+    if should_render:
+        render_dir = Path(out_dir).resolve() if out_dir else Path(tempfile.mkdtemp(prefix="pdf-toc-scan-"))
+        rendered = render_pdf_pages(
+            target,
+            range_spec,
+            render_dir,
+            scale=scale,
+            image_format=image_format,
+            sheet=sheet,
+            cols=cols,
+            rows=rows,
+            quality=quality,
+        )
+    return {
+        **info,
+        "scanRange": range_spec,
+        "textPages": text_data["items"],
+        "tocCandidates": text_data["tocCandidates"],
+        "rendered": rendered,
+    }
+
+
+def check_pages(
+    path: str | Path,
+    toc_path: str,
+    mode: str = "last",
+    offset: int | None = None,
+    page_map: str | dict[str, Any] | None = None,
+    out_dir: str | Path | None = None,
+    sheet: bool = True,
+    cols: int = 6,
+    rows: int = 3,
+    scale: float | None = None,
+    image_format: str = "png",
+    quality: int = 82,
+) -> dict[str, Any]:
+    """Render the unique physical pages that need printed-page verification.
+
+    `mode=last` checks only the last TOC entry; `mode=all` checks every
+    distinct physical page. Entries that share a physical page are grouped so
+    the page is rendered and read only once.
+    """
+    target = Path(path).resolve()
+    toc_file = Path(toc_path).resolve()
+    if not toc_file.is_file():
+        raise CliError("FILE_NOT_FOUND", f"目录文件不存在：{toc_file}")
+    reader = open_pdf(target)
+    page_count = len(reader.pages)
+    labels = get_page_labels(reader)
+    parsed = parse_toc_content(toc_file.read_text(encoding="utf-8-sig"), str(toc_file))
+    entries, _ = normalize_levels(parsed["entries"])
+    mapping = _load_page_map(page_map)
+
+    page_mode = parsed.get("pageMode")
+    if page_mode is None:
+        page_mode = "printed" if (offset is not None or mapping) else "physical"
+    if page_mode == "printed" and offset is None and not mapping:
+        label_offset = offset_from_labels(labels)
+        if label_offset and label_offset.get("detected") is not None:
+            offset = int(label_offset["detected"])
+        else:
+            text_offset = detect_text_offset(reader, page_count, 20)
+            if text_offset.get("detected") is not None:
+                offset = int(text_offset["detected"])
+            else:
+                raise CliError(
+                    "OFFSET_REQUIRED",
+                    "核对页码前需要先提供偏移量或 pageMap。",
+                    hint="用 --offset N 或 --page-map <file>；扫描件可先用 scan 查看目录页和正文页码。",
+                )
+    resolved = resolve_entry_pages(entries, page_count, page_mode, offset or 0, mapping)
+
+    if mode == "last":
+        last_page = int(resolved[-1]["page_index"])
+        selected = [entry for entry in resolved if int(entry["page_index"]) == last_page]
+    elif mode == "all":
+        selected = resolved
+    else:
+        raise CliError("CHECK_MODE_INVALID", f"未知核对模式：{mode}", exit_code=2)
+
+    grouped: dict[int, dict[str, Any]] = {}
+    for entry in selected:
+        page_index = int(entry["page_index"])
+        group = grouped.setdefault(page_index, {"physicalPage": page_index + 1, "titles": [], "printedPages": []})
+        if entry["title"] not in group["titles"]:
+            group["titles"].append(entry["title"])
+        if int(entry["page"]) not in group["printedPages"]:
+            group["printedPages"].append(int(entry["page"]))
+
+    items = [grouped[key] for key in sorted(grouped)]
+    pages_spec = ",".join(str(item["physicalPage"]) for item in items)
+    render_dir = Path(out_dir).resolve() if out_dir else Path(tempfile.mkdtemp(prefix="pdf-toc-check-"))
+    use_sheet = sheet and len(items) > 1
+    rendered = render_pdf_pages(
+        target,
+        pages_spec,
+        render_dir,
+        scale=scale if scale is not None else (0.9 if use_sheet else 1.5),
+        image_format=image_format,
+        sheet=use_sheet,
+        cols=cols,
+        rows=rows,
+        quality=quality,
+    )
+    return {
+        "ok": True,
+        "file": str(target),
+        "mode": mode,
+        "offset": offset or 0,
+        "pageMapEntries": len(mapping or {}),
+        "uniquePages": len(items),
+        "items": items,
+        "rendered": rendered,
+        "instruction": (
+            "读取 rendered.files，核对每页上实际印刷页码是否等于 printedPages。"
+            "同一物理页对应多个标题时只读一次；不一致时生成 pageMap 后再写入。"
+        ),
+    }
+
+
 def _resolve_offset(offset: int | None, anchors: list[str] | None) -> int | None:
     if isinstance(anchors, str):
         anchors = [anchors]
@@ -1424,7 +1695,7 @@ def extract_toc(path: str | Path, output_format: str = "json") -> dict[str, Any]
 # ---------------------------------------------------------------------------
 
 
-def doctor(fix: bool = False) -> dict[str, Any]:
+def doctor() -> dict[str, Any]:
     checks = []
     python_ok = sys.version_info >= (3, 9)
     checks.append(
@@ -1438,32 +1709,6 @@ def doctor(fix: bool = False) -> dict[str, Any]:
 
     global PdfReader, PdfWriter, NameObject
     if PdfReader is None:
-        try:
-            from pypdf import PdfReader as _PdfReader, PdfWriter as _PdfWriter
-            from pypdf.generic import NameObject as _NameObject
-
-            PdfReader, PdfWriter, NameObject = _PdfReader, _PdfWriter, _NameObject
-        except ImportError:
-            PdfReader = None
-
-    fix_result = None
-    if PdfReader is None and fix:
-        commands = [[sys.executable, "-m", "pip", "install", "pypdf"]]
-        if not (os.environ.get("VIRTUAL_ENV") or os.environ.get("CONDA_PREFIX")):
-            commands.append([sys.executable, "-m", "pip", "install", "--user", "pypdf"])
-        for command in commands:
-            try:
-                completed = subprocess.run(command, capture_output=True, text=True, timeout=600)
-                fix_result = {
-                    "ok": completed.returncode == 0,
-                    "command": " ".join(command),
-                    "stdout": completed.stdout[-4000:],
-                    "stderr": completed.stderr[-2000:],
-                }
-                if completed.returncode == 0:
-                    break
-            except Exception as exc:  # pragma: no cover - environment dependent
-                fix_result = {"ok": False, "command": " ".join(command), "message": str(exc)}
         try:
             from pypdf import PdfReader as _PdfReader, PdfWriter as _PdfWriter
             from pypdf.generic import NameObject as _NameObject
@@ -1489,13 +1734,30 @@ def doctor(fix: bool = False) -> dict[str, Any]:
         }
     )
 
+    render_ok = True
+    render_detail = "已安装"
+    try:
+        import pypdfium2  # noqa: F401
+        import PIL  # noqa: F401
+    except ImportError as exc:
+        render_ok = False
+        render_detail = f"未安装（{exc}）"
+    checks.append(
+        {
+            "name": "render-deps",
+            "ok": render_ok,
+            "detail": render_detail,
+            "install": "python -m pip install pypdfium2 pillow",
+            "optional": True,
+        }
+    )
+
     uv_path = shutil.which("uv")
     checks.append(
         {
             "name": "uv",
             "ok": bool(uv_path),
-            "detail": uv_path or "未安装（可选；有 uv 时可自动装依赖）",
-            "optional": True,
+            "detail": uv_path or "未安装（本 skill 只使用 uv）",
         }
     )
 
@@ -1518,9 +1780,11 @@ def doctor(fix: bool = False) -> dict[str, Any]:
 
     missing = [check["name"] for check in checks if not check["ok"] and not check.get("optional")]
     ready = not missing
-    install_command = "python -m pip install pypdf"
-    if uv_path:
-        install_command = f'uv run --script "{Path(__file__).resolve()}" doctor'
+    install_command = (
+        "安装 uv：https://docs.astral.sh/uv/getting-started/installation/"
+        if not uv_path
+        else f'uv run --script "{Path(__file__).resolve()}" doctor'
+    )
     return {
         "ok": True,
         "ready": ready,
@@ -1538,16 +1802,16 @@ def doctor(fix: bool = False) -> dict[str, Any]:
             "textPdf": True,
             "scannedPdf": True,
             "scannedAutoCalibration": False,
+            "scannedRendering": render_ok,
             "ocr": False,
             "batch": True,
             "safeOutput": True,
         },
-        "fix": fix_result,
         "script": str(Path(__file__).resolve()),
         "install": install_command,
         "notes": [
-            "pypdf 使用 BSD-3-Clause 许可证。",
-            "扫描件可以直接添加书签；但扫描件没有文字层，不能自动检测印刷页码偏移，需要 --offset / --anchor / --page-mode physical。",
+            "pypdf 使用 BSD-3-Clause 许可证；页面渲染使用 pypdfium2 + Pillow。",
+            "扫描件可以直接添加书签；目录页由 scan/render 渲染成图片，再由 Agent 视觉识别。",
             "agent 界面弹出命令授权时，请核对命令后允许；被拒绝时不要绕过。",
         ],
     }
@@ -1570,7 +1834,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     doctor_parser = subparsers.add_parser("doctor", help="检查 Python / pypdf 环境")
     _add_common(doctor_parser)
-    doctor_parser.add_argument("--fix", action="store_true", help="尝试自动安装缺少的依赖")
     doctor_parser.add_argument("--require-ready", action="store_true", help="未就绪时返回退出码 3")
 
     inspect_parser = subparsers.add_parser("inspect", help="检查 PDF 页数、文字层、页码偏移、现有书签")
@@ -1591,6 +1854,46 @@ def build_parser() -> argparse.ArgumentParser:
     text_parser.add_argument("pdf")
     text_parser.add_argument("--pages", help="页码范围，例如 1-30 或 1,5,9-12；默认前 30 页")
 
+    scan_parser = subparsers.add_parser("scan", help="一次完成 PDF 检查 + 目录页文字/图片导出")
+    _add_common(scan_parser)
+    scan_parser.add_argument("pdf")
+    scan_parser.add_argument("--pages", default="1-40", help="扫描范围，默认 1-40")
+    scan_parser.add_argument("--out-dir")
+    scan_parser.add_argument("--render", action="store_true", help="即使有文字层也强制渲染")
+    scan_parser.add_argument("--no-sheet", action="store_true", help="不拼图，每页一张图片")
+    scan_parser.add_argument("--cols", type=int, default=6)
+    scan_parser.add_argument("--rows", type=int, default=3)
+    scan_parser.add_argument("--scale", type=float)
+    scan_parser.add_argument("--format", choices=("png", "jpg", "jpeg"), default="png")
+    scan_parser.add_argument("--quality", type=int, default=82)
+
+    render_parser = subparsers.add_parser("render", help="把 PDF 页面渲染成 PNG/JPG")
+    _add_common(render_parser)
+    render_parser.add_argument("pdf")
+    render_parser.add_argument("--pages", default="1-30")
+    render_parser.add_argument("--out-dir", required=True)
+    render_parser.add_argument("--no-sheet", action="store_true")
+    render_parser.add_argument("--cols", type=int, default=6)
+    render_parser.add_argument("--rows", type=int, default=3)
+    render_parser.add_argument("--scale", type=float)
+    render_parser.add_argument("--format", choices=("png", "jpg", "jpeg"), default="png")
+    render_parser.add_argument("--quality", type=int, default=82)
+
+    check_parser = subparsers.add_parser("check-pages", help="渲染需要核对的唯一物理页，避免同页重复读取")
+    _add_common(check_parser)
+    check_parser.add_argument("pdf")
+    check_parser.add_argument("--toc", required=True)
+    check_parser.add_argument("--mode", choices=("last", "all"), default="last")
+    check_parser.add_argument("--offset", type=int)
+    check_parser.add_argument("--page-map")
+    check_parser.add_argument("--out-dir")
+    check_parser.add_argument("--no-sheet", action="store_true")
+    check_parser.add_argument("--cols", type=int, default=6)
+    check_parser.add_argument("--rows", type=int, default=3)
+    check_parser.add_argument("--scale", type=float)
+    check_parser.add_argument("--format", choices=("png", "jpg", "jpeg"), default="png")
+    check_parser.add_argument("--quality", type=int, default=82)
+
     add_parser = subparsers.add_parser("add", help="给一个 PDF 添加/替换目录")
     _add_common(add_parser)
     add_parser.add_argument("pdf")
@@ -1607,6 +1910,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_parser.add_argument("--dry-run", action="store_true")
     add_parser.add_argument("--no-verify", action="store_true")
     add_parser.add_argument("--no-open-panel", action="store_true")
+    add_parser.add_argument("--report", help="生成 Markdown 报告到这个路径")
 
     batch_parser = subparsers.add_parser("batch", help="批量处理目录或 manifest.json")
     _add_common(batch_parser)
@@ -1631,6 +1935,7 @@ def build_parser() -> argparse.ArgumentParser:
     batch_parser.add_argument("--dry-run", action="store_true")
     batch_parser.add_argument("--no-verify", action="store_true")
     batch_parser.add_argument("--no-open-panel", action="store_true")
+    batch_parser.add_argument("--report", help="生成 Markdown 报告到这个路径")
     batch_parser.add_argument("--exclude", action="append", default=[])
 
     verify_parser = subparsers.add_parser("verify", help="校验 PDF 书签")
@@ -1639,6 +1944,72 @@ def build_parser() -> argparse.ArgumentParser:
     verify_parser.add_argument("--expect-count", type=int)
 
     return parser
+
+
+def _write_add_report(target: str | Path, result: dict[str, Any]) -> str:
+    path = Path(target).resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    verification = result.get("verification") or {}
+    lines = [
+        "# PDF 目录生成报告",
+        "",
+        f"- 时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"- 输入：`{result['input']}`",
+        f"- 输出：`{result['output']}`",
+        f"- 页数：{result['pages']}",
+        f"- 书签：{result['entries']} 个 / {result['levels']} 级",
+        f"- 模式：{result['mode']}",
+    ]
+    if result.get("pageMapEntries"):
+        lines.append(f"- 页码：pageMap（{result['pageMapEntries']} 条）")
+    elif result["pageMode"] == "printed":
+        sign = "+" if result["offset"] >= 0 else ""
+        lines.append(f"- 页码：印刷页 {sign}{result['offset']} → 物理页")
+    else:
+        lines.append("- 页码：PDF 物理页")
+    if verification:
+        lines.append(f"- 校验：{'通过' if verification.get('ok') else '未通过'}（{verification.get('count')} / {verification.get('expectedCount')}）")
+    warnings = result.get("warnings") or []
+    lines.append(f"- 警告：{len(warnings)} 条")
+    if warnings:
+        lines.append("")
+        lines.append("## 警告")
+        for warning in warnings:
+            line = f"第 {warning['line']} 行：" if warning.get("line") else ""
+            lines.append(f"- {line}{warning['message']}")
+    lines.append("")
+    lines.append("## 预览")
+    for item in result.get("preview") or []:
+        lines.append(f"- {'  ' * (int(item['level']) - 1)}{item['title']} → 第 {item['physicalPage']} 页")
+    if result["entries"] > len(result.get("preview") or []):
+        lines.append(f"- ……其余 {result['entries'] - len(result.get('preview') or [])} 项")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return str(path)
+
+
+def _write_batch_report(target: str | Path, summary: dict[str, Any]) -> str:
+    path = Path(target).resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "# PDF 目录批量报告",
+        "",
+        f"- 时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"- 总数：{summary['total']}",
+        f"- 成功：{summary['succeeded']}",
+        f"- 失败：{summary['failed']}",
+        f"- 跳过：{summary['skipped']}",
+        f"- 布局：{summary.get('layout')}",
+        "",
+        "| 状态 | 输入 | 输出 | 书签 |",
+        "|---|---|---|---|",
+    ]
+    for item in summary.get("items", []):
+        status = "成功" if item.get("ok") else ("跳过" if item.get("skipped") else "失败")
+        output = item.get("output") or ""
+        entries = item.get("entries", "")
+        lines.append(f"| {status} | `{item.get('input') or ''}` | `{output}` | {entries} |")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return str(path)
 
 
 def _print_add(result: dict[str, Any]) -> None:
@@ -1701,10 +2072,14 @@ def _cmd_add(args) -> int:
         verify=not args.no_verify,
         open_panel=not args.no_open_panel,
     )
+    if args.report:
+        result["report"] = _write_add_report(args.report, result)
     if args.json:
         emit_json({"ok": True, "command": "add", **result})
     else:
         _print_add(result)
+        if result.get("report"):
+            human(f"报告：{result['report']}")
     return 0
 
 
@@ -1793,6 +2168,84 @@ def _cmd_text(args) -> int:
     return 0
 
 
+def _cmd_scan(args) -> int:
+    result = scan_pdf(
+        args.pdf,
+        pages_spec=args.pages,
+        out_dir=args.out_dir,
+        force_render=args.render,
+        sheet=not args.no_sheet,
+        cols=args.cols,
+        rows=args.rows,
+        scale=args.scale,
+        image_format=args.format,
+        quality=args.quality,
+    )
+    if args.json:
+        emit_json({"ok": True, "command": "scan", **result})
+        return 0
+    human(f"PDF：{result['file']}  |  页数：{result['pages']}  |  {'扫描件' if result['text']['scanned'] else '文字版'}")
+    offset = result.get("offset")
+    if offset and offset.get("detected") is not None:
+        human(f"页码偏移：{offset['detected']:+d}（{offset['confidence']}，{offset['source']}）")
+    if result["tocCandidates"]:
+        human(f"可能的目录页：{', '.join(str(page) for page in result['tocCandidates'])}")
+    if result.get("rendered"):
+        human(f"已渲染：{len(result['rendered']['files'])} 个文件 → {result['rendered']['outDir']}")
+        for item in result["rendered"]["files"]:
+            human(f"  {item['path']}")
+    return 0
+
+
+def _cmd_render(args) -> int:
+    result = render_pdf_pages(
+        args.pdf,
+        args.pages,
+        args.out_dir,
+        scale=args.scale,
+        image_format=args.format,
+        sheet=not args.no_sheet,
+        cols=args.cols,
+        rows=args.rows,
+        quality=args.quality,
+    )
+    if args.json:
+        emit_json({"ok": True, "command": "render", **result})
+        return 0
+    human(f"已渲染 {len(result['files'])} 个文件到：{result['outDir']}（{result['mode']}）")
+    for item in result["files"]:
+        human(f"  {item['path']}")
+    return 0
+
+
+def _cmd_check_pages(args) -> int:
+    result = check_pages(
+        args.pdf,
+        args.toc,
+        mode=args.mode,
+        offset=args.offset,
+        page_map=args.page_map,
+        out_dir=args.out_dir,
+        sheet=not args.no_sheet,
+        cols=args.cols,
+        rows=args.rows,
+        scale=args.scale,
+        image_format=args.format,
+        quality=args.quality,
+    )
+    if args.json:
+        emit_json({"ok": True, "command": "check-pages", **result})
+        return 0
+    human(f"核对模式：{result['mode']}  |  唯一页数：{result['uniquePages']}  |  偏移：{result['offset']}")
+    for item in result["items"]:
+        human(f"  物理页 {item['physicalPage']} ← 印刷页 {item['printedPages']}：{' / '.join(item['titles'])}")
+    if result.get("rendered"):
+        human(f"图片：{result['rendered']['outDir']}")
+        for item in result["rendered"]["files"]:
+            human(f"  {item['path']}")
+    return 0
+
+
 def _cmd_verify(args) -> int:
     result = verify_pdf(args.pdf, args.expect_count)
     if args.json:
@@ -1810,7 +2263,7 @@ def _cmd_verify(args) -> int:
 
 
 def _cmd_doctor(args) -> int:
-    result = doctor(fix=args.fix)
+    result = doctor()
     if args.json:
         emit_json(result)
     else:
@@ -1823,7 +2276,7 @@ def _cmd_doctor(args) -> int:
         human("环境就绪，可以处理 PDF。" if result["ready"] else f"环境未就绪，缺少：{', '.join(result['missing'])}")
         if not result["ready"]:
             human(result["install"])
-    if not result["ready"] and (args.require_ready or args.fix):
+    if not result["ready"] and args.require_ready:
         return 3
     return 0
 
@@ -2048,6 +2501,8 @@ def _cmd_batch(args) -> int:
         "items": results,
         "durationMs": int((time.time() - started) * 1000),
     }
+    if args.report:
+        summary["report"] = _write_batch_report(args.report, summary)
     if args.json:
         emit_json(summary)
     else:
@@ -2055,6 +2510,8 @@ def _cmd_batch(args) -> int:
         human(f"完成：成功 {succeeded}，失败 {failed}，跳过 {skipped}")
         if mirror_root:
             human(f"输出目录：{mirror_root}")
+        if summary.get("report"):
+            human(f"报告：{summary['report']}")
         if not ok:
             human("有项目未成功处理，请查看上方错误或使用 --json 获取详情。")
     return 0 if ok else 1
@@ -2083,6 +2540,12 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_extract(args)
         if args.command == "text":
             return _cmd_text(args)
+        if args.command == "scan":
+            return _cmd_scan(args)
+        if args.command == "render":
+            return _cmd_render(args)
+        if args.command == "check-pages":
+            return _cmd_check_pages(args)
         if args.command == "batch":
             return _cmd_batch(args)
         if args.command == "verify":
