@@ -47,7 +47,7 @@ npx skills add https://github.com/yluiop123/skills --list
 
 Agent 会自动检查环境、识别目录和页码、在工具里向你确认，然后写入新文件并汇报结果。**你不需要手动运行任何脚本。** 运行环境只使用 `uv`。
 
-详细说明见 [`skills/pdf-toc/README.md`](skills/pdf-toc/README.md)。
+详细说明见 [`skills/pdf-toc/README.md`](skills/pdf-toc/README.md)（[English](skills/pdf-toc/README.en.md)）。
 
 ## 目录结构
 
@@ -55,7 +55,8 @@ Agent 会自动检查环境、识别目录和页码、在工具里向你确认�
 skills/
 └── pdf-toc/
     ├── SKILL.md
-    ├── README.md          # 用户说明
+    ├── README.md          # 用户说明（中文）
+    ├── README.en.md       # 用户说明（English）
     ├── CLI.md             # 开发者命令行参考
     ├── scripts/
     │   └── pdf_toc.py

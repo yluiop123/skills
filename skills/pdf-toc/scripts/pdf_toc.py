@@ -25,7 +25,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 DEFAULT_SUFFIX = ".toc"
 PAGE_MODE_VALUES = ("auto", "physical", "printed")
 MODE_VALUES = ("replace", "merge", "keep")
@@ -377,9 +377,24 @@ def _detect_numbering_level(text: str) -> int:
         return 3
     if re.match(r"^第[〇零一二三四五六七八九十百千万0-9]+(?![章节篇编部卷])", text):
         return 3
-    numeric = re.match(r"^(\d+(?:\.\d+)+)[.、\s]", text)
+
+    # English / Latin numbering
+    if re.match(r"^(chapter|book|part|volume|unit|appendix)\s+([0-9]+|[ivxlcdm]+|[a-z]+)\b", text, re.IGNORECASE):
+        return 1
+    section = re.match(r"^section\s+(\d+(?:\.\d+)*)\b", text, re.IGNORECASE)
+    if section:
+        return max(2, len(section.group(1).split(".")))
+    if re.match(r"^[A-Z]\.\s+\S", text):
+        return 2
+    if re.match(r"^[IVXLCDM]+\.\s+\S", text):
+        return 1
+
+    numeric = re.match(r"^(\d+(?:\.\d+)+)[.、)\s]", text)
     if numeric:
-        return len(numeric.group(1).split("."))
+        return min(5, len(numeric.group(1).split(".")))
+    numeric_single = re.match(r"^(\d+)[.)]?\s+\S", text)
+    if numeric_single:
+        return 1
     if re.match(r"^\d+[.、]\s+", text):
         return 1
     return 0
@@ -389,7 +404,7 @@ def _is_structural_heading(title: str) -> bool:
     return bool(
         re.match(r"^第[〇零一二三四五六七八九十百千万0-9]+[卷篇编部]", title)
         or re.match(r"^[上中下]卷", title)
-        or re.match(r"^(part|volume)\s+[ivxlcdm0-9]+", title, re.IGNORECASE)
+        or re.match(r"^(part|volume|book|appendix)\s+([ivxlcdm0-9]+|[a-z]+)", title, re.IGNORECASE)
     )
 
 

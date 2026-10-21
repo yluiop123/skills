@@ -110,6 +110,32 @@ class TocParserTests(unittest.TestCase):
         self.assertEqual(entries[0]["page_index"], 26)
         self.assertEqual(entries[1]["page_index"], 6)
 
+    def test_english_numbering_levels(self):
+        parsed = pdf_toc.parse_toc_content(
+            """Chapter 1 Introduction .......... 1
+  Section 1.1 Background ........ 2
+    1.1.1 Details ............... 3
+Chapter 2 Methods ............... 10
+Appendix A Glossary ............. 20
+""",
+            "book.en.toc.md",
+        )
+        self.assertEqual(
+            [(entry["title"], entry["page"], entry["level"]) for entry in parsed["entries"]],
+            [
+                ("Chapter 1 Introduction", 1, 1),
+                ("Section 1.1 Background", 2, 2),
+                ("1.1.1 Details", 3, 3),
+                ("Chapter 2 Methods", 10, 1),
+                ("Appendix A Glossary", 20, 1),
+            ],
+        )
+
+    def test_english_page_number_detection(self):
+        self.assertEqual(pdf_toc._page_number_from_line("Page 12"), 12)
+        self.assertEqual(pdf_toc._page_number_from_line("12  Chapter 1 Introduction"), 12)
+        self.assertEqual(pdf_toc._page_number_from_line("Chapter 1 Introduction  12"), 12)
+
     def test_parse_page_spec(self):
         self.assertEqual(pdf_toc.parse_page_spec("1-3,5", 10), [0, 1, 2, 4])
         self.assertEqual(pdf_toc.parse_page_spec("3-1", 10), [0, 1, 2])

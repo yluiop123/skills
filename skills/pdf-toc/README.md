@@ -2,6 +2,8 @@
 
 [![skills.sh](https://skills.sh/b/yluiop123/skills)](https://skills.sh/yluiop123/skills)
 
+[English](README.en.md)
+
 在 Agent（OpenCode / Claude Code / Cursor / Codex 等）里说一句话，就能给 PDF 加目录（书签 / Outline）。
 
 **你不需要运行任何脚本。** Agent 会检查环境、识别目录和页码、在工具里向你确认，然后写入新文件。运行环境只使用 `uv run --script`；不需要 pip、pipx 或虚拟环境。
@@ -136,6 +138,7 @@ books/                      books/
 - 文字版 PDF
 - 扫描件 PDF（书签不依赖文字层）
 - 中文 / 英文 / 中英混排
+- 英文编号：Chapter / Section / Part / Appendix；中文编号：第一章 / 第一节 / 1.1
 - 单文件 / 多文件 / 整个文件夹
 - 已有书签：替换、合并、保留
 - 页码：整体偏移、锚点、逐页 pageMap、物理页
