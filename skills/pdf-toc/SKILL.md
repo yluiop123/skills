@@ -4,7 +4,7 @@ description: "PDF bookmarks / table of contents (TOC / Outline) generator for te
 license: MIT
 compatibility: Requires Python 3.9+ and uv. Dependencies are installed by uv from the script's PEP 723 header.
 metadata:
-  version: "1.5.0"
+  version: "1.5.1"
 ---
 
 # PDF 目录（书签）助手
@@ -98,26 +98,35 @@ uv run --script "<技能目录>/scripts/pdf_toc.py" doctor --json
 
 用 OpenCode `question` / Claude Code `AskUserQuestion`。
 
-### 问题 1：页码核对方式（所有情况都问）
+只问两组。文件夹问题只在输入是文件夹时加入。
 
-- **只用印刷页 + 偏移量（推荐）**：读一页，算出 `物理页 = 印刷页 + 偏移`，不逐页核对。
-- **核对最后一页**：生成前渲染目录最后一项所在页，确认印刷页码。
-- **核对目录涉及的每一页**：把所有目录项映射到物理页，去重后逐页核对；两个章节同页只读一次。
+### 中文提问模板（OpenCode `question`）
 
-### 问题 2：文件夹输出（仅输入是文件夹时问）
+```json
+{
+  "questions": [
+    {
+      "header": "页码核对",
+      "question": "页码怎么核对？",
+      "options": [
+        { "label": "印刷页 + 偏移（推荐）", "description": "读一页，算出：物理页 = 印刷页 + 偏移；不逐页核对" },
+        { "label": "核对最后一页", "description": "渲染目录最后一项所在页，确认页面上的印刷页码" },
+        { "label": "核对目录涉及的每一页", "description": "把所有目录项映射到物理页，按物理页去重后逐页核对" }
+      ]
+    },
+    {
+      "header": "文件夹输出",
+      "question": "文件夹的输出方式？",
+      "options": [
+        { "label": "新建镜像文件夹（推荐）", "description": "新建 <源文件夹名><后缀>/，保持 PDF 文件名和目录结构" },
+        { "label": "每个 PDF 同目录", "description": "输出到各自目录，文件名为 <源文件名><后缀>.pdf" }
+      ]
+    }
+  ]
+}
+```
 
-- **新建文件夹（推荐）**：新建 `<源文件夹名><后缀>/`，PDF 文件名和目录结构保持不变。
-- **每个 PDF 同目录**：输出到各自目录，文件名为 `<源文件名><后缀>.pdf`。
-
-其他规则（不需要问）：
-
-- 单个 PDF 默认同目录，`book.pdf → book.toc.pdf`。
-- 已有书签默认替换；如果检测到旧书签，在报告里说明。
-- 目录来源默认自动读取；只有读不到目录时才请用户提供文件/文本。
-
-### English question template
-
-If the user writes in English, ask in English with the same two questions. OpenCode example:
+### English question template (OpenCode `question`)
 
 ```json
 {
@@ -143,7 +152,13 @@ If the user writes in English, ask in English with the same two questions. OpenC
 }
 ```
 
-Only include the folder question when the input is a folder. Use Claude Code's `AskUserQuestion` with the same labels/options if that host is active.
+输入是文件夹时才加入文件夹问题；单个文件不要问。Claude Code 用 `AskUserQuestion` 时使用相同的 `header` / `question` / `label` / `description`，字段名按宿主调整。
+
+其他规则（不需要问）：
+
+- 单个 PDF 默认同目录，`book.pdf → book.toc.pdf`。
+- 已有书签默认替换；如果检测到旧书签，在报告里说明。
+- 目录来源默认自动读取；只有读不到目录时才请用户提供文件/文本。
 
 Final status/report must also be English for an English request, including warnings and `OFFSET_MISMATCH`.
 
