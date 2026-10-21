@@ -28,9 +28,12 @@ uv run --script scripts/pdf_toc.py --help
 
 ## 环境要求
 
-- Python **>= 3.9**
-- `pypdf >= 6.0`
-- `pypdfium2 >= 4.30`、`Pillow >= 10`（`scan` / `render` 使用）
+- **uv**（必须先安装一次；Python 和依赖由 uv 管理）
+- Python **>= 3.9**（uv 会自动下载/使用）
+- `pypdf >= 6,<7`
+- `pypdfium2 >= 4.30,<6`、`Pillow >= 10,<12`（`scan` / `check-pages` 使用）
+
+首次运行 `uv run --script` 会自动安装 Python（如果需要）和上述依赖到 uv 缓存。
 
 ## 运行方式
 

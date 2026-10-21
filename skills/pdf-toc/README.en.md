@@ -36,7 +36,7 @@ npx skills add https://github.com/yluiop123/skills --skill pdf-toc -g
 
 ## What happens
 
-1. The Agent checks `uv` and the Python dependencies.
+1. The Agent checks `uv`. If uv is missing, it asks whether to install it (official installer, once). Python and pypdf/pypdfium2/Pillow are then installed automatically by uv.
 2. It scans the PDF: text vs. scanned, page count, existing bookmarks, page-label offset.
 3. It asks you exactly two things:
    - **Page verification**: printed page + offset (recommended) / verify the last page / verify every page referenced by the TOC.

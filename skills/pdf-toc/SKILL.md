@@ -4,7 +4,7 @@ description: "PDF bookmarks / table of contents (TOC / Outline) generator for te
 license: MIT
 compatibility: Requires Python 3.9+ and uv. Dependencies are installed by uv from the script's PEP 723 header.
 metadata:
-  version: "1.4.0"
+  version: "1.4.1"
 ---
 
 # PDF 目录（书签）助手
@@ -30,15 +30,51 @@ metadata:
 
 ## 第 0 步：环境检查
 
+### 0.1 先检查 uv（uv 是引导工具，必须先有）
+
+```bash
+uv --version
+```
+
+- 有 → 进入 0.2。
+- 没有 → 用提问工具问用户：
+
+  > 这个 skill 需要先安装 uv（只需一次）。安装会从 astral.sh 下载，可能弹出权限提示。是否安装？
+  > - 安装 uv（推荐）
+  > - 我自己安装
+  > - 取消
+
+  用户同意后按平台执行官方安装脚本：
+
+  ```powershell
+  # Windows PowerShell
+  powershell -NoProfile -ExecutionPolicy Bypass -c "irm https://astral.sh/uv/install.ps1 | iex"
+  ```
+
+  ```bash
+  # macOS / Linux
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  ```
+
+  安装后如果当前 shell 还找不到 `uv`，使用安装器输出的路径，例如：
+  - Windows：`%USERPROFILE%\.local\bin\uv.exe`
+  - macOS/Linux：`~/.local/bin/uv`
+
+  用户拒绝或安装失败 → 停止，不要改用 pip / pipx / 系统 Python。
+
+### 0.2 检查 Python / pypdf / 渲染依赖
+
 ```bash
 uv run --script "<技能目录>/scripts/pdf_toc.py" doctor --json
 ```
 
 - `ready: true` → 继续。
 - `ready: false` → 检查 `missing`。
-  - 缺 `uv`：请用户先安装 uv（https://docs.astral.sh/uv/），不要改用 pip。
-  - 缺依赖：`uv run --script` 会自动安装，重新执行即可。
-- 需要联网安装时，宿主会弹出授权，请用户确认。
+  - 缺 Python：`uv run --script` 会按 `requires-python` 自动下载/使用 Python。
+  - 缺 pypdf / pypdfium2 / pillow：`uv run --script` 会自动装到 uv 缓存，重新执行即可。
+- 第一次运行会联网下载，宿主会弹出授权，请用户确认。
+
+> 总结：**uv 需要先安装一次；Python 和 pypdf 等依赖由 uv 自动安装。**
 
 ## 第 1 步：提问（只问必要的）
 

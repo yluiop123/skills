@@ -25,7 +25,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-VERSION = "1.4.0"
+VERSION = "1.4.1"
 DEFAULT_SUFFIX = ".toc"
 PAGE_MODE_VALUES = ("auto", "physical", "printed")
 MODE_VALUES = ("replace", "merge", "keep")

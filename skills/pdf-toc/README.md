@@ -47,7 +47,7 @@ npx skills add https://github.com/yluiop123/skills --skill pdf-toc \
 
 ### 1. 自动检查环境
 
-Agent 自动检查 uv 环境和依赖（由 uv 按脚本声明自动安装）。缺依赖会在宿主的授权弹窗中提示。
+Agent 自动检查 uv；没有 uv 会先问你是否安装（官方脚本，只需一次）。Python 和 pypdf / pypdfium2 / Pillow 由 uv 自动下载安装，缺依赖会弹出授权提示。
 
 ### 2. 自动检查 PDF
 
