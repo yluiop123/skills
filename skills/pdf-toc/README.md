@@ -41,7 +41,10 @@ The Agent replies in the language of your request: English request → English q
 1. The Agent checks `uv`. If uv is missing, it asks whether to install it (official installer, once). Python and pypdf/pypdfium2/Pillow are then installed automatically by uv.
 2. It scans the PDF: text vs. scanned, page count, existing bookmarks, page-label offset.
 3. It asks you exactly two things:
-   - **Page verification**: printed page + offset (recommended) / verify the last page / verify every page referenced by the TOC.
+   - **Page verification**: choose one:
+     - **Printed page + offset (recommended)**: fastest; reads one page and applies a fixed offset. Best for continuous numbering. Cannot detect local page errors or missing pages; a wrong offset shifts every bookmark.
+     - **Verify the last page**: faster than a full check; confirms the overall offset and the end of the book. Earlier local errors can slip through; an appendix/index ending can mislead.
+     - **Verify every page in the TOC**: most reliable; catches local page errors, missing pages, and wrong TOC numbers. Slowest, especially for large or scanned books.
    - **Folder output** (only for folders): mirror folder with unchanged names and structure (recommended), or output next to each PDF with a suffix.
 4. It reads the TOC:
    - text PDFs: extracts page text;

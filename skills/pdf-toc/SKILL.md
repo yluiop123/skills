@@ -4,7 +4,7 @@ description: "PDF bookmarks / table of contents (TOC / Outline) generator for te
 license: MIT
 compatibility: Requires Python 3.9+ and uv. Dependencies are installed by uv from the script's PEP 723 header.
 metadata:
-  version: "1.5.1"
+  version: "1.5.2"
 ---
 
 # PDF 目录（书签）助手
@@ -109,9 +109,9 @@ uv run --script "<技能目录>/scripts/pdf_toc.py" doctor --json
       "header": "页码核对",
       "question": "页码怎么核对？",
       "options": [
-        { "label": "印刷页 + 偏移（推荐）", "description": "读一页，算出：物理页 = 印刷页 + 偏移；不逐页核对" },
-        { "label": "核对最后一页", "description": "渲染目录最后一项所在页，确认页面上的印刷页码" },
-        { "label": "核对目录涉及的每一页", "description": "把所有目录项映射到物理页，按物理页去重后逐页核对" }
+        { "label": "印刷页 + 偏移（推荐）", "description": "优点：最快，只读一页；适合页码连续、偏移固定的书。缺点：发现不了局部错页、缺页或目录页码错误；偏移错会导致全部书签偏移。" },
+        { "label": "核对最后一页", "description": "优点：比逐页快，能确认整体偏移和末尾是否对齐。缺点：只抽查末尾，前面章节的局部错页发现不了；末尾是附录/索引时可能误判。" },
+        { "label": "核对目录涉及的每一页", "description": "优点：最可靠，能发现局部错页、缺页和目录页码错误。缺点：最慢，需要渲染并查看较多页；大书耗时和 token 消耗高。" }
       ]
     },
     {
@@ -135,9 +135,9 @@ uv run --script "<技能目录>/scripts/pdf_toc.py" doctor --json
       "header": "Page verification",
       "question": "How should I verify the page numbers?",
       "options": [
-        { "label": "Printed page + offset (recommended)", "description": "Read one page, compute physical = printed + offset; no per-page check" },
-        { "label": "Verify the last page", "description": "Render the last TOC entry's page and confirm its printed page number" },
-        { "label": "Verify every page in the TOC", "description": "Map all entries to physical pages, deduplicate, and check each unique page" }
+        { "label": "Printed page + offset (recommended)", "description": "Pros: fastest, reads one page; good for continuous numbering with a fixed offset. Cons: misses local page errors, missing pages, or wrong TOC numbers; a wrong offset shifts every bookmark." },
+        { "label": "Verify the last page", "description": "Pros: faster than a full check; confirms the overall offset and the end of the book. Cons: samples only the last entry, so earlier local errors go unnoticed; an appendix/index ending can mislead." },
+        { "label": "Verify every page in the TOC", "description": "Pros: most reliable; catches local page errors, missing pages, and wrong TOC numbers. Cons: slowest; renders and inspects many pages, so large books cost more time and tokens." }
       ]
     },
     {
