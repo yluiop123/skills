@@ -1,6 +1,6 @@
 ---
 name: pdf-toc
-description: 给 PDF 添加或替换目录（书签 / Outline），兼容文字版和扫描件，支持单个文件和整个文件夹。用户说“请给 xxx.pdf 增加目录”“请给 xxx 里的 pdf 文件增加目录”“给这本书加书签”“批量给扫描书加目录”时触发。Agent 自动读取目录和页码、在工具中确认核对方式，生成新的带目录 PDF 并汇报结果，绝不修改原文件。
+description: "PDF bookmarks / table of contents (TOC / Outline) generator for text and scanned PDFs, single file or folder batch. 给 PDF 添加/替换目录：用户说“请给 xxx.pdf 增加目录”“请给 xxx 里的 pdf 文件增加目录”“给这本书加书签”“批量给扫描书加目录”时触发。Agent 自动读取目录和页码、在工具中确认核对方式，生成新的带目录 PDF 并汇报结果，绝不修改原文件。"
 license: MIT
 compatibility: Requires Python 3.9+ and uv. Dependencies are installed by uv from the script's PEP 723 header.
 metadata:

@@ -1,5 +1,7 @@
 # pdf-toc
 
+[![skills.sh](https://skills.sh/b/yluiop123/skills)](https://skills.sh/yluiop123/skills)
+
 在 Agent（OpenCode / Claude Code / Cursor / Codex 等）里说一句话，就能给 PDF 加目录（书签 / Outline）。
 
 **你不需要运行任何脚本。** Agent 会检查环境、识别目录和页码、在工具里向你确认，然后写入新文件。运行环境只使用 `uv run --script`；不需要 pip、pipx 或虚拟环境。

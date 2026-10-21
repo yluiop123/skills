@@ -1,5 +1,7 @@
 # Skills
 
+[![skills.sh](https://skills.sh/b/yluiop123/skills)](https://skills.sh/yluiop123/skills)
+
 Agent Skills 集合，兼容 OpenCode、Claude Code、Cursor、Codex、Gemini CLI 等支持 `SKILL.md` 的宿主。
 
 | Skill | 说明 |

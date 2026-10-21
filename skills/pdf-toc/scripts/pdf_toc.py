@@ -1689,6 +1689,43 @@ def extract_toc(path: str | Path, output_format: str = "json") -> dict[str, Any]
     }
 
 
+def cleanup_workdir(path: str | Path, force: bool = False) -> dict[str, Any]:
+    """Remove a temporary work directory created for scan/check-pages.
+
+    Only directories under the system temp directory are removed by default.
+    A directory elsewhere needs an explicit --force, and the current working
+    directory (or one of its parents) is never removed.
+    """
+    target = Path(path).resolve()
+    temp_root = Path(tempfile.gettempdir()).resolve()
+    cwd = Path.cwd().resolve()
+    if not target.exists():
+        return {"ok": True, "removed": False, "path": str(target), "reason": "目录不存在"}
+    if not target.is_dir():
+        raise CliError("CLEANUP_NOT_DIR", f"不是目录：{target}", exit_code=2)
+    if target == temp_root:
+        raise CliError("CLEANUP_REFUSED", "拒绝删除系统临时目录根目录。", exit_code=2)
+    if target == cwd or target in cwd.parents:
+        raise CliError(
+            "CLEANUP_REFUSED",
+            f"拒绝删除当前项目目录或其上级目录：{target}",
+            hint="清理命令只用于扫描/核对产生的临时目录。",
+            exit_code=2,
+        )
+    allowed = target.is_relative_to(temp_root) or (target / ".pdf-toc-work").is_file()
+    if not allowed and not force:
+        raise CliError(
+            "CLEANUP_REFUSED",
+            f"目录不在系统临时目录下：{target}",
+            hint="只清理临时工作目录；如果确认要删除，加 --force。",
+            exit_code=2,
+        )
+    shutil.rmtree(target)
+    return {"ok": True, "removed": True, "path": str(target)}
+
+
+
+
 # ---------------------------------------------------------------------------
 # Doctor
 # ---------------------------------------------------------------------------
@@ -1940,6 +1977,11 @@ def build_parser() -> argparse.ArgumentParser:
     verify_parser.add_argument("pdf")
     verify_parser.add_argument("--expect-count", type=int)
 
+    cleanup_parser = subparsers.add_parser("cleanup", help="清理 scan/check-pages 产生的临时目录")
+    _add_common(cleanup_parser)
+    cleanup_parser.add_argument("dir")
+    cleanup_parser.add_argument("--force", action="store_true", help="允许删除系统临时目录以外的目录")
+
     return parser
 
 
@@ -2170,6 +2212,17 @@ def _cmd_check_pages(args) -> int:
         human(f"图片：{result['rendered']['outDir']}")
         for item in result["rendered"]["files"]:
             human(f"  {item['path']}")
+    return 0
+
+
+def _cmd_cleanup(args) -> int:
+    result = cleanup_workdir(args.dir, force=args.force)
+    if args.json:
+        emit_json({"ok": True, "command": "cleanup", **result})
+    else:
+        human(("已删除：" if result["removed"] else "无需删除：") + result["path"])
+        if result.get("reason"):
+            human(result["reason"])
     return 0
 
 
@@ -2473,6 +2526,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_batch(args)
         if args.command == "verify":
             return _cmd_verify(args)
+        if args.command == "cleanup":
+            return _cmd_cleanup(args)
         if args.command == "doctor":
             return _cmd_doctor(args)
         raise CliError("USAGE", f"未知命令：{args.command}", exit_code=2)
